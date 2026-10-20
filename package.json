@@ -1,0 +1,26 @@
+{
+  "name": "clock-out",
+  "version": "0.12.0",
+  "private": true,
+  "description": "Claude Code plugin: keeps CronCreate schedules alive across session restarts",
+  "author": "nias2734-wq",
+  "license": "MIT",
+  "homepage": "https://github.com/nias2734-wq/clock-out#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nias2734-wq/clock-out.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nias2734-wq/clock-out/issues"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "validate": "claude plugin validate .",
+    "test": "claude plugin test .",
+    "version:set": "node scripts/version.js",
+    "version:check": "node scripts/version.js --check"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

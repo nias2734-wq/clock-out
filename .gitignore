@@ -1,0 +1,11 @@
+.claude-plugin/types/
+node_modules/
+*.log
+# 개발 캡처 PNG 는 올리지 않음 | 아래 두 곳만 예외
+*.png
+# README 용 화면 캡처
+!docs/screenshots/*.png
+# electron-builder 가 설치 파일 아이콘으로 씀(app/package.json build.win.icon) | 없으면 새로 clone 한 곳에서 빌드 실패
+!app/resources/*.png
+widget-position.json
+.DS_Store

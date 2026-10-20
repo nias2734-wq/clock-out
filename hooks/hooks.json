@@ -1,0 +1,13 @@
+{
+  "modules": ["./register.tsx"],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "CronCreate|CronDelete",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/notify.sh\"", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "clock-out",
+  "version": "0.12.0",
+  "description": "Keeps CronCreate schedules alive: records every session's jobs, renews expiring ones, revives stopped sessions, and shows them all in /clock-out.",
+  "author": {
+    "name": "nias2734-wq",
+    "url": "https://github.com/nias2734-wq"
+  },
+  "homepage": "https://github.com/nias2734-wq/clock-out",
+  "repository": "https://github.com/nias2734-wq/clock-out",
+  "license": "MIT",
+  "keywords": [
+    "cron",
+    "schedule",
+    "CronCreate",
+    "background",
+    "resume"
+  ],
+  "userConfig": {
+    "usageWidget": {
+      "title": "Usage widget (Windows)",
+      "type": "boolean",
+      "default": false,
+      "description": "Windows service: show the usage status bar widget (off = service runs without a window)"
+    },
+    "alignPing": {
+      "title": "Align 5-hour window (Windows)",
+      "type": "boolean",
+      "default": false,
+      "description": "Windows service: send a tiny haiku call at 08:xx and 13:xx on weekdays so the 5-hour window resets at 13:00 / 18:00"
+    },
+    "expandAt": {
+      "title": "Daily revive time",
+      "type": "string",
+      "default": "17:55",
+      "description": "Service: time of day (HH:mm) to revive every stopped session that still has jobs"
+    },
+    "weekdaysOnly": {
+      "title": "Weekdays only",
+      "type": "boolean",
+      "default": true,
+      "description": "Service: only do the expandAt revive on weekdays"
+    },
+    "reviveLeadMinutes": {
+      "title": "Revive lead (minutes)",
+      "type": "number",
+      "default": 10,
+      "description": "Service: revive a stopped session this many minutes before its next job"
+    },
+    "expiryLeadHours": {
+      "title": "Re-register lead (hours)",
+      "type": "number",
+      "default": 24,
+      "description": "Re-register a recurring job this many hours before Claude Code's 7-day expiry"
+    },
+    "legacyTranscriptScan": {
+      "title": "Scan transcripts (legacy)",
+      "type": "boolean",
+      "default": false,
+      "description": "Service: also read ~/.claude/projects transcripts for sessions that never loaded this plugin"
+    }
+  },
+  "types": "./types/index.d.ts"
+}

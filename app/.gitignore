@@ -1,0 +1,7 @@
+node_modules/
+out/
+dist/
+*.log
+# 개발 캡처 폴더(scripts/shot.ps1, CLOCKOUT_SHOT_DIR 출력)
+shots/
+docs/

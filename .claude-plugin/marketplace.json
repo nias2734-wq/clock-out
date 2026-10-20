@@ -1,0 +1,14 @@
+{
+  "name": "clock-out",
+  "owner": {
+    "name": "nias2734-wq"
+  },
+  "description": "Keeps Claude Code CronCreate schedules alive across session restarts.",
+  "plugins": [
+    {
+      "name": "clock-out",
+      "source": "./",
+      "version": "0.12.0"
+    }
+  ]
+}
