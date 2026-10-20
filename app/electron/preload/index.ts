@@ -17,6 +17,8 @@ const api: ClockOutApi = {
   getSchedule: () => ipcRenderer.invoke('schedule:get') as Promise<Overview>,
   hideJob: jobId => ipcRenderer.invoke('schedule:hide', jobId) as Promise<string>,
   reviveSession: sessionId => ipcRenderer.invoke('schedule:revive', sessionId) as Promise<string>,
+  runMissed: (sessionId, key) => ipcRenderer.invoke('schedule:runMissed', sessionId, key) as Promise<string>,
+  dismissMissed: (sessionId, key) => ipcRenderer.invoke('schedule:dismissMissed', sessionId, key) as Promise<string>,
   attachSession: sessionId => ipcRenderer.invoke('schedule:attach', sessionId) as Promise<string>,
   openSession: sessionId => ipcRenderer.invoke('schedule:open', sessionId) as Promise<string>,
   stopSession: (sessionId, confirmed) => ipcRenderer.invoke('schedule:stop', sessionId, confirmed === true) as Promise<string>,

@@ -1,10 +1,10 @@
-import { AlertTriangle, AppWindow, Bell, BellOff, Clock, ExternalLink, Plus, RotateCcw, Smartphone, X as XIcon, Languages, Monitor, Moon, Plug, Shield, Sliders, Sun } from 'lucide-react'
+import { AlertTriangle, AppWindow, Bell, BellOff, Clock, ExternalLink, FlaskConical, Plus, RotateCcw, Smartphone, X as XIcon, Languages, Monitor, Moon, Plug, Shield, Sliders, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { dailySweepHm } from '@shared/revive'
 import type { Overview } from '@shared/schedule'
 import { hm, planPings } from '@shared/timeline'
-import { RUN_MODES } from '@shared/types'
+import { DEFAULT_SETTINGS, RUN_MODES } from '@shared/types'
 import type { AppSettings, PermissionMode } from '@shared/types'
 
 import { api } from './api'
@@ -14,17 +14,19 @@ import { Timeline } from './Timeline'
 // The settings window (?view=settings). Every value the person set is editable here; a change is saved at once.
 const L = {
   ko: {
-    why: 'Claude 사용량은 5시간 단위 창으로 쌓였다가 초기화됩니다. 출근·점심·퇴근을 알려 주면 오후 업무와 퇴근 뒤 야간 예약이 각각 새 5시간으로 시작하도록, 정해진 시각에 아주 짧은 요청(핑)을 보내 초기화 시각을 맞춥니다. 아래 타임라인에서 오늘 하루가 어떻게 흘러가는지 확인하세요.',
+    why: 'Claude 사용량은 5시간 단위 창으로 쌓였다가 초기화됩니다. 출근·점심·퇴근을 알려 주면 오후 업무와 퇴근 뒤 야간 예약이 각각 새 5시간으로 시작하도록, 정해진 시각에 아주 짧은 요청(핑)을 보내 초기화 시각을 맞추려고 시도합니다(실험 기능, 기본 꺼짐). 아래 타임라인에서 오늘 하루가 어떻게 흘러가는지 확인하세요.',
     title: '설정', work: '근무시간과 토큰 초기화', start: '출근', lunch: '점심', end: '퇴근', weekdays: '근무 요일',
     ping: '토큰 창 정렬', pingOn: '정렬 핑 보내기 (타임라인의 ⚡ 표시)',
     resets: '초기화 시각', resetAuto: '자동', resetCustom: '직접 지정', resetAutoHint: '점심 끝과 그 5시간 뒤', resetAdd: '시각 추가', resetRemove: '빼기', resetTooClose: '앞 초기화 뒤 5시간이 안 되어 이 시각에는 초기화될 수 없습니다',
-    pingsAt: (p: string) => `정렬 핑 ${p} — 초기화 5시간 전에 보내 그 정시부터 창을 엽니다`,
+    pingsAt: (p: string) => `정렬 핑 ${p} — 초기화 5시간 전에 보내 그 정시부터 창이 열리도록 시도합니다`,
+    experimental: '실험 기능', pingNote: 'Anthropic 이 보장하는 동작이 아니라 관찰한 규칙에 기댑니다. 초기화 시각을 보장하지 않습니다.',
     model: '핑 모델', revive: '되살리기', lead: '예약 n분 전에 깨움', expiry: '반복 예약 만료 n시간 전에 깨움',
     daily: '퇴근 5분 전에 꺼진 세션 모두 깨움', confirm: '깨우기 전에 확인(알림만 하고 직접 누름)', dryRun: '시험 모드: 로그만 남기고 실제로 깨우지 않음',
     permission: '되살린 세션의 권한', work_mode: '작업 가능 모드', work_desc: '파일 수정은 묻지 않고, 아래 허용 도구만 묻지 않고 실행합니다 (acceptEdits)',
     bypass: 'bypass — 아무것도 묻지 않음', bypass_desc: '되살린 세션이 확인 없이 모든 파일을 고치고 모든 명령을 실행합니다',
     bypassWarn: 'bypass 를 켜면 사람 없이 켜진 세션이 어떤 명령이든 확인 없이 실행합니다. 세션의 예약 프롬프트를 믿을 수 있을 때만 켜세요.',
-    bypassYes: '위험을 이해하고 켭니다', cancel: '취소', allowed: '허용 도구 (한 줄에 하나)',
+    bypassYes: '위험을 이해하고 켭니다', cancel: '취소', allowed: '허용 도구 (한 줄에 하나)', denied: '차단 도구 (한 줄에 하나, 허용 목록·bypass 보다 먼저 적용)',
+    defaults: '권장 기본값으로', defaultsHint: 'push·publish·reset --hard 는 기본 차단합니다. 허용은 파일 읽기·수정과 git 조회·pull, 빌드·테스트만입니다.',
     savedOnce: '한 번 백그라운드로 돈 세션은 그때의 권한이 저장됩니다. 바꾼 설정은 다음에 처음 깨우는 세션부터 적용됩니다.',
     display: '화면', theme: '테마', themeSystem: 'Windows 설정 따라가기', themeLight: '라이트', themeDark: '다크', language: '언어', launch: 'Windows 로그인 시 자동 실행', legacy: '플러그인 없이 돈 세션의 대화 기록도 읽기',
     openGuide: '사용설명서 · 연동 점검 열기', guideHint: '설치 여부를 확인하고 버튼 하나로 설치합니다',
@@ -42,17 +44,19 @@ const L = {
     quiet_desc: '백그라운드로 실행하고 따로 알리지 않습니다(원격 알림 설정은 그대로).', notify_desc: '백그라운드로 실행하고, 시작할 때와 답을 기다릴 때 Windows 알림을 띄웁니다. 알림을 누르면 그 세션이 터미널 창으로 열립니다.', open_desc: '예약 시각에 그 세션을 터미널 창으로 띄워 바로 보여 줍니다. 깨우기는 그대로 백그라운드로 합니다.',
   },
   en: {
-    why: 'Claude usage adds up in 5-hour windows that then reset. Given your start, lunch and end, the app sends a tiny call (a ping) at set times so the afternoon and the nightly jobs after work each start with a fresh 5 hours. The timeline shows how today plays out.',
+    why: 'Claude usage adds up in 5-hour windows that then reset. Given your start, lunch and end, the app sends a tiny call (a ping) at set times to try to start the afternoon and the nightly jobs after work each with a fresh 5 hours (experimental, off by default). The timeline shows how today plays out.',
     title: 'Settings', work: 'Work hours and token resets', start: 'Start', lunch: 'Lunch', end: 'End', weekdays: 'Work days',
     ping: 'Align the 5-hour window', pingOn: 'Send the align ping (⚡ on the timeline)',
     resets: 'Reset times', resetAuto: 'Auto', resetCustom: 'Choose', resetAutoHint: 'lunch end and 5 hours later', resetAdd: 'Add a time', resetRemove: 'Remove', resetTooClose: 'Less than 5 hours after the previous reset: no window can end at this time',
-    pingsAt: (p: string) => `Align ping ${p} — sent 5 hours before each reset to open the window on that hour`,
+    pingsAt: (p: string) => `Align ping ${p} — sent 5 hours before each reset to try to open the window on that hour`,
+    experimental: 'Experimental', pingNote: 'This relies on observed behaviour, not on anything Anthropic guarantees. The reset times are not guaranteed.',
     model: 'Ping model', revive: 'Reviving', lead: 'Wake a stopped session N minutes before its job', expiry: 'Wake N hours before a recurring job expires',
     daily: 'Wake every stopped session 5 minutes before the work end', confirm: 'Ask before waking (notify only)', dryRun: 'Dry run: log only, never wake',
     permission: 'Permissions of a revived session', work_mode: 'Work mode', work_desc: 'Edits without asking, and the allowed tools below run without asking (acceptEdits)',
     bypass: 'bypass — never ask', bypass_desc: 'A revived session edits any file and runs any command without confirmation',
     bypassWarn: 'With bypass on, a session started without anyone watching runs any command unasked. Enable it only when you trust the prompts of every scheduled job.',
-    bypassYes: 'I understand the risk, enable', cancel: 'Cancel', allowed: 'Allowed tools (one per line)',
+    bypassYes: 'I understand the risk, enable', cancel: 'Cancel', allowed: 'Allowed tools (one per line)', denied: 'Blocked tools (one per line; win over the allowed list and bypass)',
+    defaults: 'Recommended defaults', defaultsHint: 'push, publish and reset --hard are blocked by default. Allowed: reading and editing files, git status/diff/log/fetch/pull, build and test.',
     savedOnce: 'A session that ran in the background once keeps that permission; a changed setting applies to sessions woken for the first time from now on.',
     display: 'Display', theme: 'Theme', themeSystem: 'Follow Windows', themeLight: 'Light', themeDark: 'Dark', language: 'Language', launch: 'Start with Windows', legacy: 'Also read transcripts of sessions that ran without the plugin',
     openGuide: 'Open user guide · setup check', guideHint: 'Checks the install and installs it with one button',
@@ -72,6 +76,19 @@ const L = {
 }
 const DAYS = ['일', '월', '화', '수', '목', '금', '토']
 const DAYS_EN = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+
+// A tool list, one per line: the text stays as typed (a new empty line while typing), the saved list drops empty lines
+function ToolList({ label, value, onSave }: { label: string; value: string[]; onSave: (tools: string[]) => void }) {
+  const parse = (text: string) => text.split('\n').map(x => x.trim()).filter(Boolean)
+  const [text, setText] = useState(value.join('\n'))
+  // a change from elsewhere (the defaults button, another window) replaces the text
+  useEffect(() => { setText(old => (parse(old).join('\n') === value.join('\n') ? old : value.join('\n'))) }, [value])
+  return (
+    <label className="block">{label}
+      <textarea rows={4} value={text} onChange={e => { setText(e.target.value); onSave(parse(e.target.value)) }} />
+    </label>
+  )
+}
 
 export function Settings({ initial, version }: { initial: AppSettings; version: string }) {
   const [s, setS] = useState<AppSettings>(initial)
@@ -144,9 +161,10 @@ export function Settings({ initial, version }: { initial: AppSettings; version: 
         {s.alignPing.enabled && <div className="muted small">{l.pingsAt(plan.pings.map(hm).join(', '))}</div>}
         <Timeline settings={s} overview={overview} now={now} />
         <div className="row">
-          <label className="check"><input type="checkbox" checked={s.alignPing.enabled} onChange={e => save({ alignPing: { ...s.alignPing, enabled: e.target.checked } })} /> {l.pingOn}</label>
+          <label className="check"><input type="checkbox" checked={s.alignPing.enabled} onChange={e => save({ alignPing: { ...s.alignPing, enabled: e.target.checked } })} /> {l.pingOn} <span className="pill warn">{l.experimental}</span></label>
           <label className="muted">{l.model} <input className="short" value={s.alignPing.model} onChange={e => save({ alignPing: { ...s.alignPing, model: e.target.value } })} /></label>
         </div>
+        <div className="note"><FlaskConical size={14} /> {l.pingNote}</div>
       </section>
 
       <section>
@@ -194,11 +212,13 @@ export function Settings({ initial, version }: { initial: AppSettings; version: 
             </div>
           </div>
         )}
-        {s.permission.mode === 'work' && (
-          <label className="block">{l.allowed}
-            <textarea rows={4} value={s.permission.allowedTools.join('\n')} onChange={e => save({ permission: { ...s.permission, allowedTools: e.target.value.split('\n').map(x => x.trim()).filter(Boolean) } })} />
-          </label>
-        )}
+        {s.permission.mode === 'work' && <ToolList label={l.allowed} value={s.permission.allowedTools} onSave={allowedTools => save({ permission: { ...s.permission, allowedTools } })} />}
+        {/* --disallowedTools goes with bypass too (shared/revive.ts) */}
+        <ToolList label={l.denied} value={s.permission.disallowedTools} onSave={disallowedTools => save({ permission: { ...s.permission, disallowedTools } })} />
+        <div className="row">
+          <button className="btn secondary small" onClick={() => save({ permission: { ...s.permission, allowedTools: [...DEFAULT_SETTINGS.permission.allowedTools], disallowedTools: [...DEFAULT_SETTINGS.permission.disallowedTools] } })}><RotateCcw size={13} /> {l.defaults}</button>
+          <span className="muted">{l.defaultsHint}</span>
+        </div>
         <div className="note muted">{l.savedOnce}</div>
       </section>
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { shell } from 'electron'
@@ -7,18 +7,21 @@ import { permissionArgs, resumedCopyIn } from '@shared/revive'
 import type { RemoteView, SessionView } from '@shared/schedule'
 import type { AppSettings } from '@shared/types'
 
+import { isRequestDone, markRequestDone, sessionState } from './appState'
+import { clearInboxes, postInbox } from './inbox'
 import { log } from './log'
 import { paths } from './paths'
 import { readRemoteState, writeRemoteState } from './remoteState'
-import { notice, readFile, reviveSession, runClaude } from './revive'
+import { notice, readFile, runClaude } from './revive'
 import { buildOverview, liveSessions } from './schedule'
 import { getSettings } from './settings'
+import { wakeSession } from './wake'
 
 // The remote jobs session (원격 예약 작업 세션): a background session in <config>/clock-out/remote started with
 // --remote-control, so the person reaches it from the Claude mobile app or claude.ai/code. Measured 2026-10-19:
 //   - `claude --bg --remote-control "<name>"` connects without a terminal; the address is the live record's bridgeSessionId
 //   - later `claude --bg --resume <id>` without flags reconnects to the same address (flags again would start a copy)
-// It also carries out what the plugin's tools ask for (<config>/clock-out/requests/<sessionId>.json):
+// It also carries out what the plugin's tools ask for (<config>/clock-out/requests/<sessionId>.<id>.json, oldest first):
 //   wake        wake a stopped session, the forwarded instruction as its first message
 //   openRemote  stop a session that never ran in the background and start it again under Remote Control
 // and leaves the outcome in the remote jobs session's inbox (<config>/clock-out/inbox/<id>/), which its plugin submits.
@@ -28,6 +31,7 @@ const RETRY_MS = 2 * 60_000            // a failed start is not retried sooner
 const STOP_WAIT_MS = 15_000            // a stopped session leaves the live records within this
 const BRIDGE_WAIT_MS = 20_000          // a started session gets its Remote Control address within this
 const REQUEST_MAX_AGE_MS = 24 * 3_600_000
+const HALF_WRITTEN_MS = 30_000         // an unreadable request newer than this may still be being written: read it next time
 const GUIDE_VERSION = 1
 
 const NAME = { ko: '원격 예약 작업', en: 'Remote jobs' }
@@ -102,7 +106,7 @@ function writeGuide(settings: AppSettings): void {
 
 // the remote jobs session's permission: the app's work mode (acceptEdits + allowed tools) plus the plugin's own tools
 function remotePermission(settings: AppSettings): AppSettings['permission'] {
-  return { mode: settings.remote.permission, allowedTools: [...settings.permission.allowedTools, 'mcp__clock-out'] }
+  return { mode: settings.remote.permission, allowedTools: [...settings.permission.allowedTools, 'mcp__clock-out'], disallowedTools: settings.permission.disallowedTools }
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -174,35 +178,15 @@ export async function stopRemote(): Promise<void> {
   log(`REMOTE stop ${state.sessionId.slice(0, 8)} exit ${ran.code}`)
 }
 
-type RemoteRequest = { kind: 'wake' | 'openRemote'; sessionId: string; message?: string; when?: 'afterRun' | 'now'; requestedAt: number }
+// id: a uuid from 0.13 plugins (hooks/remote.ts writeRequest); an older request goes by its file name
+export type RemoteRequest = { id?: string; kind: 'wake' | 'openRemote'; sessionId: string; message?: string; when?: 'afterRun' | 'now'; requestedAt: number }
 
-let posted = 0
 // The outcome of a request, as a message in the remote jobs session's inbox (hooks/remote.ts deliverInbox)
 function writeResult(_sessionId: string, ok: boolean, text: string): void {
   notice(text, ok ? 'info' : 'warn')
   const remote = readRemoteState().sessionId
   if (remote === undefined) return
-  const dir = join(paths.inboxDir, remote)
-  mkdirSync(dir, { recursive: true })
-  const at = Date.now()
-  writeFileSync(join(dir, `${at}-app${posted++}.json`), JSON.stringify({ text: `[clock-out] ${ok ? '✓' : '✗'} ${text}`, at, from: 'app' }, null, 2), 'utf8')
-}
-
-// Delivered inbox messages (and any older than a day) are removed
-function clearInboxes(): void {
-  let sessions: string[] = []
-  try { sessions = readdirSync(paths.inboxDir) } catch { return }
-  for (const s of sessions) {
-    let names: string[] = []
-    try { names = readdirSync(join(paths.inboxDir, s)) } catch { continue }
-    for (const name of names) {
-      const path = join(paths.inboxDir, s, name)
-      try {
-        const m = JSON.parse(readFileSync(path, 'utf8')) as { deliveredAt?: number; at?: number }
-        if (m.deliveredAt !== undefined || Date.now() - (m.at ?? 0) > REQUEST_MAX_AGE_MS) unlinkSync(path)
-      } catch { /* half-written: next time */ }
-    }
-  }
+  postInbox(remote, `[clock-out] ${ok ? '✓' : '✗'} ${text}`, 'app')
 }
 
 // Stops a running session: a background one with `claude stop`, a terminal one by ending its process
@@ -221,7 +205,7 @@ async function handle(req: RemoteRequest, lang: AppSettings['language']): Promis
 
   if (req.kind === 'wake') {
     if (view.isAlive) { writeResult(req.sessionId, false, `${name} 은 이미 켜져 있습니다. send 로 다시 보내세요.`); return 'done' }
-    const r = await reviveSession(view, 'remote request', { message: req.message !== undefined ? req.message + ORDER_TAIL[lang] : undefined })
+    const r = await wakeSession(view, 'remote request', { message: req.message !== undefined ? req.message + ORDER_TAIL[lang] : undefined })
     writeResult(req.sessionId, r.ok, r.ok ? `${name} 을 깨웠습니다${req.message !== undefined ? '. 지시를 처리하고 [clock-out 응답] 으로 답합니다' : ''}.` : `${name} 을 깨우지 못했습니다: ${r.message}`)
     return 'done'
   }
@@ -229,12 +213,13 @@ async function handle(req: RemoteRequest, lang: AppSettings['language']): Promis
   // openRemote: only a session that never ran in the background can get --remote-control (else a copy starts)
   const file = readFile(req.sessionId)
   if (file?.running !== undefined && req.when === 'afterRun') return 'wait'
-  if (file?.bgSince !== undefined && file.remoteSince === undefined) {
+  const app = sessionState(req.sessionId)
+  if ((file?.bgSince ?? app.bgSince) !== undefined && (file?.remoteSince ?? app.remoteSince) === undefined) {
     writeResult(req.sessionId, false, `${name} 은 원격 없이 백그라운드로 실행된 적이 있어 원격을 붙일 수 없습니다. send 로 지시를 전달하세요.`)
     return 'done'
   }
   if (view.isAlive && !(await stopSession(view))) { writeResult(req.sessionId, false, `${name} 을 멈추지 못해 원격으로 열지 못했습니다.`); return 'done' }
-  const r = await reviveSession({ ...view, isAlive: false }, 'open under Remote Control', { forceRemote: true })
+  const r = await wakeSession({ ...view, isAlive: false }, 'open under Remote Control', { forceRemote: true })
   if (!r.ok) { writeResult(req.sessionId, false, `${name} 을 원격으로 열지 못했습니다: ${r.message}`); return 'done' }
   const bridge = await waitFor(() => liveSessions().get(req.sessionId)?.bridge, BRIDGE_WAIT_MS)
   writeResult(req.sessionId, true, bridge !== undefined
@@ -243,24 +228,48 @@ async function handle(req: RemoteRequest, lang: AppSettings['language']): Promis
   return 'done'
 }
 
-let busy = false
-async function processRequests(): Promise<void> {
+const remove = (path: string) => { try { unlinkSync(path) } catch { /* gone */ } }
+
+// The request files to carry out now, oldest requestedAt first. Skipped: files being written (*.tmp, or unreadable and
+// newer than 30 s); removed: unreadable older ones, requests older than a day, and an id carried out before
+export function pendingRequests(now = Date.now()): { path: string; id: string; req: RemoteRequest }[] {
   let names: string[] = []
-  try { names = readdirSync(paths.requestsDir) } catch { return }
-  const lang = getSettings().language
+  try { names = readdirSync(paths.requestsDir) } catch { return [] }
+  const out: { path: string; id: string; req: RemoteRequest }[] = []
   for (const name of names) {
     const path = join(paths.requestsDir, name)
-    if (name.endsWith('.result.json')) { try { unlinkSync(path) } catch { /* gone */ } continue }   // 0.7.0–0.7.2 results
+    if (name.endsWith('.result.json')) { remove(path); continue }   // 0.7.0–0.7.2 results
     if (!name.endsWith('.json')) continue
     let req: RemoteRequest | undefined
-    try { req = JSON.parse(readFileSync(path, 'utf8')) as RemoteRequest } catch { req = undefined }
-    if (req === undefined || typeof req.sessionId !== 'string' || Date.now() - req.requestedAt > REQUEST_MAX_AGE_MS) { try { unlinkSync(path) } catch { /* gone */ } continue }
+    try { req = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) as RemoteRequest } catch { req = undefined }
+    if (req === undefined || typeof req.sessionId !== 'string' || typeof req.requestedAt !== 'number') {
+      let age = Infinity
+      try { age = now - statSync(path).mtimeMs } catch { /* gone */ }
+      if (age > HALF_WRITTEN_MS) remove(path)
+      continue
+    }
+    if (now - req.requestedAt > REQUEST_MAX_AGE_MS) { remove(path); continue }
+    out.push({ path, id: typeof req.id === 'string' && req.id !== '' ? req.id : name, req })
+  }
+  return out.sort((a, b) => a.req.requestedAt - b.req.requestedAt)
+}
+
+let busy = false
+async function processRequests(): Promise<void> {
+  const lang = getSettings().language
+  for (const { path, id, req } of pendingRequests()) {
+    // the same id again (a second copy of one request, or a file left by a failed delete): carried out once only
+    if (isRequestDone(id)) { log(`REMOTE request ${id} was already carried out`); remove(path); continue }
     log(`REMOTE request ${req.kind} ${req.sessionId.slice(0, 8)}${req.when !== undefined ? ` (${req.when})` : ''}`)
     try {
-      if ((await handle(req, lang)) === 'done') unlinkSync(path)
+      const outcome = await handle(req, lang)
+      if (outcome === 'wait') continue
+      markRequestDone(id)
+      remove(path)
     } catch (err) {
       log(`REMOTE request failed ${String(err)}`)
-      try { unlinkSync(path) } catch { /* gone */ }
+      remove(path)
+      markRequestDone(id)
       writeResult(req.sessionId, false, `요청을 처리하지 못했습니다: ${String(err).slice(0, 120)}`)
     }
   }

@@ -1,6 +1,7 @@
 import { atom, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
+import { isHiddenJob, readAppState } from './appState'
 import { cronNext } from './cron'
 import { clockOutPaths } from './paths'
 import { readSessionFile } from './sessionFile'
@@ -46,7 +47,8 @@ async function liveSessionIds($: EngineInterface, dir: string): Promise<Set<stri
   return ids
 }
 
-export function sessionView(file: SessionFile, now: number, isAlive: boolean, isOwn: boolean): ClockOutSessionView {
+// hidden: the app's hidden of this session (app-state.json), which overrides file.dismissed
+export function sessionView(file: SessionFile, now: number, isAlive: boolean, isOwn: boolean, hidden?: Record<string, boolean>): ClockOutSessionView {
   const jobs: ClockOutJobView[] = []
   for (const j of file.jobs) {
     if (j.deletedAt !== undefined || j.goneAt !== undefined || j.firedAt !== undefined) continue
@@ -60,14 +62,14 @@ export function sessionView(file: SessionFile, now: number, isAlive: boolean, is
       recurring: j.recurring,
       nextAt,
       isExpiringSoon: false,
-      isDismissed: file.dismissed.includes(j.id),
+      isDismissed: isHiddenJob(file.dismissed, hidden, j.id),
     }
     if (j.expiresAt !== undefined) {
       view.expiresAt = j.expiresAt
       view.expiresInDays = Math.max(0, Math.ceil((j.expiresAt - now) / DAY_MS))
       view.isExpiringSoon = j.expiresAt - now <= EXPIRING_SOON_DAYS * DAY_MS
     }
-    if (run !== undefined) view.lastRun = { finishedAt: run.finishedAt, reason: run.reason, durationMs: run.durationMs, answerHead: run.answerHead }
+    if (run !== undefined) view.lastRun = { finishedAt: run.finishedAt, reason: run.reason, ...(run.taskOutcome !== undefined ? { taskOutcome: run.taskOutcome } : {}), durationMs: run.durationMs, answerHead: run.answerHead }
     jobs.push(view)
   }
   jobs.sort((a, b) => (a.nextAt ?? Infinity) - (b.nextAt ?? Infinity))
@@ -92,6 +94,7 @@ export async function buildOverview($: EngineInterface): Promise<ClockOutOvervie
   const paths = await clockOutPaths($)
   const own = await $.session.id()
   const live = await liveSessionIds($, paths.liveSessionsDir)
+  const app = await readAppState($)
   const sessions: ClockOutSessionView[] = []
   let entries: { name: string; kind: string }[] = []
   try {
@@ -105,7 +108,7 @@ export async function buildOverview($: EngineInterface): Promise<ClockOutOvervie
     if (file === undefined) continue
     const fresh = file.alive && file.heartbeatAt !== undefined && now - file.heartbeatAt < HEARTBEAT_STALE_MS
     const isAlive = fresh || live.has(file.sessionId) || file.sessionId === own
-    const view = sessionView(file, now, isAlive, file.sessionId === own)
+    const view = sessionView(file, now, isAlive, file.sessionId === own, app?.sessions[file.sessionId]?.hidden)
     if (view.jobs.length === 0) continue
     sessions.push(view)
   }
@@ -132,7 +135,7 @@ export function formatOverview(o: ClockOutOverview, now: number): string {
     for (const j of s.jobs) {
       const bits = [`[${j.id}] ${j.humanSchedule}`, `next ${fmtTime(j.nextAt, now)}`]
       if (j.expiresInDays !== undefined && j.isExpiringSoon) bits.push(`expires in ${j.expiresInDays}d`)
-      if (j.lastRun !== undefined) bits.push(`last ${j.lastRun.reason === 'answer' ? 'ok' : j.lastRun.reason} ${fmtTime(j.lastRun.finishedAt, now)} (${Math.round(j.lastRun.durationMs / 1000)}s)`)
+      if (j.lastRun !== undefined) bits.push(`last ${j.lastRun.reason === 'answer' ? 'answered (unverified)' : j.lastRun.reason} ${fmtTime(j.lastRun.finishedAt, now)} (${Math.round(j.lastRun.durationMs / 1000)}s)`)
       if (j.isDismissed) bits.push('hidden')
       lines.push(`  - ${bits.join(' · ')} | ${j.prompt.replace(/\s+/g, ' ').slice(0, 60)}`)
     }

@@ -1,10 +1,13 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { readAppSettings } from './appSettings'
+import { backgroundOf } from './appState'
 import { buildOverview, fmtTime, labelOf } from './overview'
 import { clockOutPaths } from './paths'
 import { findSessionId } from './revive'
-import { readSessionFile, touchStamp } from './sessionFile'
+import { DELIVERED_KEPT, taskOutcomeOf } from './schema'
+import type { TaskOutcome } from './schema'
+import { readSessionFile, touchStamp, updateOwnSession } from './sessionFile'
 
 // The remote jobs session (원격 예약 작업 세션): one session the desktop app starts in <config>/clock-out/remote with
 // `claude --bg --remote-control`, so the person reaches it from the Claude mobile app. Only that session gets the
@@ -25,8 +28,24 @@ export const NOTICE_MARK = '[clock-out]'
 const INBOX_POLL_MS = 15_000
 
 export type RemoteState = { sessionId?: string }   // <config>/clock-out/remote.json, written by the app
-export type RemoteRequest = { kind: 'wake' | 'openRemote'; sessionId: string; message?: string; when?: 'afterRun' | 'now'; requestedAt: number }
-export type InboxMessage = { text: string; at: number; from?: string; deliveredAt?: number }   // inbox/<sessionId>/<at>-<n>.json
+// requests/<sessionId>.<id>.json, one file per request so a second request never overwrites the first
+export type RemoteRequest = { id: string; kind: 'wake' | 'openRemote'; sessionId: string; message?: string; when?: 'afterRun' | 'now'; requestedAt: number }
+// inbox/<sessionId>/<at>-<n>.json. deliveredAt is written only after prompt.submit returned.
+export type InboxMessage = {
+  id?: string                // uuid; a message without one goes by its file name
+  text: string
+  at: number
+  from?: string
+  submittingAt?: number      // prompt.submit started; left without deliveredAt (a crash) the message becomes unknown
+  deliveredAt?: number
+  attempts?: number          // failed submits so far
+  lastError?: string
+  nextTryAt?: number         // the next read before this leaves it (and the ones after it) waiting
+  state?: 'failed' | 'unknown'   // gave up after MAX_ATTEMPTS | may or may not have been submitted: never resubmitted on its own
+}
+
+const RETRY_DELAYS_MS = [15_000, 60_000, 5 * 60_000]   // after the 1st, 2nd, 3rd and later failure
+const MAX_ATTEMPTS = 5
 
 const slashed = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 
@@ -61,7 +80,7 @@ export function takeOrder(): string | undefined {
 // Leaves a message in a session's inbox; that session submits it to itself when it next reads the inbox
 export async function postToSession($: EngineInterface, sessionId: string, text: string): Promise<void> {
   const now = await $.clock.now()
-  const message: InboxMessage = { text, at: now, from: await $.session.id() }
+  const message: InboxMessage = { id: crypto.randomUUID(), text, at: now, from: await $.session.id() }
   await $.fs.write(`${(await clockOutPaths($)).root}/inbox/${sessionId}/${now}-${posted++}.json`, JSON.stringify(message, null, 2))
 }
 
@@ -73,13 +92,26 @@ export async function sendToRemote($: EngineInterface, text: string): Promise<bo
   return true
 }
 
+let delivering = false   // one inbox read at a time in this process (a submit can outlast the 15 s timer)
+
 // Reads this session's inbox and submits each new message, oldest first. Not while a scheduled job of this session
 // runs (an instruction then would cut into it): the messages wait for the next read.
 export async function deliverInbox($: EngineInterface): Promise<number> {
+  if (delivering) return 0
+  delivering = true
+  try {
+    return await deliverInboxOnce($)
+  } finally {
+    delivering = false
+  }
+}
+
+async function deliverInboxOnce($: EngineInterface): Promise<number> {
   const paths = await clockOutPaths($)
   const own = await $.session.id()
   const file = await readSessionFile($, `${paths.sessionsDir}/${own}.json`)
   if (file?.running !== undefined) return 0
+  const seen = new Set(file?.deliveredIds ?? [])
   const dir = `${paths.root}/inbox/${own}`
   let entries: { name: string; kind: string }[] = []
   try { entries = await $.fs.list(dir) } catch { return 0 }
@@ -87,10 +119,47 @@ export async function deliverInbox($: EngineInterface): Promise<number> {
   for (const name of entries.filter(e => e.kind === 'file' && e.name.endsWith('.json')).map(e => e.name).sort()) {
     const path = `${dir}/${name}`
     const message = await readJson<InboxMessage>($, path)
-    if (message === undefined || message.deliveredAt !== undefined) continue
-    await $.fs.write(path, JSON.stringify({ ...message, deliveredAt: await $.clock.now() }, null, 2))   // the app clears delivered ones
+    if (message === undefined || message.deliveredAt !== undefined || message.state !== undefined) continue
+    const id = message.id ?? name
+    const now = await $.clock.now()
+    // 1. an id already submitted here (the same message again): marked delivered, not submitted
+    if (seen.has(id)) {
+      await $.fs.write(path, JSON.stringify({ ...message, deliveredAt: now }, null, 2))
+      continue
+    }
+    // 2. a submit started but never recorded its end (the session stopped): it may have entered, so never again
+    if (message.submittingAt !== undefined) {
+      await $.fs.write(path, JSON.stringify({ ...message, state: 'unknown' }, null, 2))
+      continue
+    }
+    // 3. waiting for its retry: the ones after it wait too, to keep the order
+    if (message.nextTryAt !== undefined && message.nextTryAt > now) break
+    await $.fs.write(path, JSON.stringify({ ...message, submittingAt: now }, null, 2))
+    const isOrder = message.text.trimStart().startsWith(ORDER_MARK)
     noteOrder(message.text)
-    await $.prompt.submit({ text: message.text })
+    let error: string | undefined
+    try {
+      const answer = await $.prompt.submit({ text: message.text })
+      if (answer.drop !== undefined) error = `dropped: ${answer.drop}`
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err)
+    }
+    // 4. submit failed: attempts, error and next try (15 s → 60 s → 5 min), failed after the 5th
+    if (error !== undefined) {
+      if (isOrder) takeOrder()
+      const attempts = (message.attempts ?? 0) + 1
+      const retry = attempts >= MAX_ATTEMPTS
+        ? { state: 'failed' as const }
+        : { nextTryAt: now + (RETRY_DELAYS_MS[Math.min(attempts, RETRY_DELAYS_MS.length) - 1] ?? 0) }
+      const failed: InboxMessage = { ...message, attempts, lastError: error.slice(0, 300), ...retry }
+      delete failed.submittingAt
+      await $.fs.write(path, JSON.stringify(failed, null, 2))
+      break
+    }
+    // 5. submitted: the id goes to the session file first, then deliveredAt (the app clears delivered ones)
+    await updateOwnSession($, f => { f.deliveredIds = [...(f.deliveredIds ?? []).filter(x => x !== id), id].slice(-DELIVERED_KEPT) })
+    seen.add(id)
+    await $.fs.write(path, JSON.stringify({ ...message, submittingAt: now, deliveredAt: await $.clock.now() }, null, 2))
     delivered++
   }
   return delivered
@@ -101,9 +170,10 @@ export function startInbox($: EngineInterface): void {
   $.clock.every(INBOX_POLL_MS, () => { void deliverInbox($).catch(() => undefined) })
 }
 
-async function writeRequest($: EngineInterface, request: RemoteRequest): Promise<void> {
+async function writeRequest($: EngineInterface, fields: Omit<RemoteRequest, 'id'>): Promise<void> {
   const paths = await clockOutPaths($)
-  await $.fs.write(`${paths.root}/requests/${request.sessionId}.json`, JSON.stringify(request, null, 2))
+  const request: RemoteRequest = { id: crypto.randomUUID(), ...fields }
+  await $.fs.write(`${paths.root}/requests/${request.sessionId}.${request.id}.json`, JSON.stringify(request, null, 2))
   await touchStamp($)
 }
 
@@ -125,13 +195,15 @@ async function bridgeIds($: EngineInterface): Promise<Map<string, string>> {
 
 const remoteUrl = (bridge: string) => `https://claude.ai/code/${bridge}`
 const durText = (ms: number) => (ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`)
-const runMark = (reason: string) => (reason === 'answer' ? '✓' : '✗')
+// an answer is not proof the work succeeded, so no ✓: only failed turns get a mark
+const outcomeOf = (run: { reason: string; taskOutcome?: TaskOutcome }): TaskOutcome => run.taskOutcome ?? taskOutcomeOf(run.reason)
+const runMark = (run: { reason: string; taskOutcome?: TaskOutcome }) => (outcomeOf(run) === 'failed' ? '✗' : '응답 완료 · 성공 미검증')
 
 // The list the desktop app shows (<config>/clock-out/overview.json, rewritten every 30 s while it runs). It also has
 // sessions found only in transcripts (started before the plugin), which this plugin cannot see on its own; without a
 // fresh file the plugin's own list is used.
 const APP_OVERVIEW_FRESH_MS = 3 * 60_000
-type AppJob = { id: string; humanSchedule: string; prompt: string; nextAt?: number; isDismissed: boolean; lastRun?: { finishedAt: number; reason: string; durationMs: number; answerHead?: string } }
+type AppJob = { id: string; humanSchedule: string; prompt: string; nextAt?: number; isDismissed: boolean; lastRun?: { finishedAt: number; reason: string; taskOutcome?: TaskOutcome; durationMs: number; answerHead?: string } }
 type AppSession = { sessionId: string; shortId: string; label: string; isAlive: boolean; source?: 'plugin' | 'transcript'; running?: { promptHead: string; firedAt: number }; remoteUrl?: string; remoteSince?: number; jobs: AppJob[] }
 type ListedSessions = { sessions: AppSession[]; jobCount: number; fromApp: boolean }
 
@@ -148,7 +220,8 @@ async function listedSessions($: EngineInterface): Promise<ListedSessions> {
   for (const s of own.sessions) {
     const file = await readSessionFile($, `${paths.sessionsDir}/${s.sessionId}.json`)
     const bridge = bridges.get(s.sessionId)
-    sessions.push({ ...s, source: 'plugin', running: file?.running, remoteSince: file?.remoteSince, remoteUrl: bridge !== undefined ? remoteUrl(bridge) : undefined })
+    const { remoteSince } = await backgroundOf($, s.sessionId, file)
+    sessions.push({ ...s, source: 'plugin', running: file?.running, remoteSince, remoteUrl: bridge !== undefined ? remoteUrl(bridge) : undefined })
   }
   return { sessions, jobCount: own.jobCount, fromApp: false }
 }
@@ -165,7 +238,7 @@ export async function statusText($: EngineInterface): Promise<string> {
     if (s.running !== undefined) lines.push(`  ▶ 실행 중 (${fmtTime(s.running.firedAt, now)}부터): ${s.running.promptHead.slice(0, 80)}`)
     for (const j of s.jobs) {
       const last = j.lastRun === undefined ? '아직 실행 없음'
-        : `마지막 ${runMark(j.lastRun.reason)} ${fmtTime(j.lastRun.finishedAt, now)} (${durText(j.lastRun.durationMs)})${j.lastRun.answerHead ? ` "${j.lastRun.answerHead.slice(0, 80)}"` : ''}`
+        : `마지막 ${runMark(j.lastRun)} ${fmtTime(j.lastRun.finishedAt, now)} (${durText(j.lastRun.durationMs)})${j.lastRun.answerHead ? ` "${j.lastRun.answerHead.slice(0, 80)}"` : ''}`
       lines.push(`  - [${j.id}] ${j.humanSchedule} · 다음 ${fmtTime(j.nextAt, now)} · ${last}${j.isDismissed ? ' · 숨김' : ''}`)
       lines.push(`    ${j.prompt.replace(/\s+/g, ' ').slice(0, 100)}`)
     }
@@ -217,13 +290,14 @@ export async function openRemote($: EngineInterface, session: string, when: 'aft
   if (typeof target === 'string') return target
   const file = await readSessionFile($, `${(await clockOutPaths($)).sessionsDir}/${target.sessionId}.json`)
   const name = `${target.label} · ${target.short}`
-  if (file?.remoteSince !== undefined) {
+  const background = await backgroundOf($, target.sessionId, file)
+  if (background.remoteSince !== undefined) {
     const bridge = (await bridgeIds($)).get(target.sessionId)
     if (bridge !== undefined) return `${name} 은 이미 원격으로 열려 있습니다: ${remoteUrl(bridge)} (Claude 앱 세션 목록에도 있습니다)`
     await writeRequest($, { kind: 'wake', sessionId: target.sessionId, requestedAt: await $.clock.now() })
     return `${name} 은 꺼져 있어 깨웁니다. 깨어나면 같은 원격 주소로 Claude 앱에 나타납니다.`
   }
-  if (file?.bgSince !== undefined) {
+  if (background.bgSince !== undefined) {
     return `${name} 은 원격 없이 백그라운드로 실행된 적이 있어 원격을 붙일 수 없습니다(옵션을 다시 주면 복사본이 생깁니다). send 도구로 지시를 전달하세요.`
   }
   if (file?.running !== undefined && when === undefined) {
@@ -273,11 +347,12 @@ export function registerRemote(on: On): void {
 }
 
 // For runs.ts: the line for a finished scheduled job, when the app's notify setting asks for it
-export async function noticeOfRun($: EngineInterface, run: { reason: string; durationMs: number; promptHead: string; answerHead: string; finishedAt: number }): Promise<string | undefined> {
+export async function noticeOfRun($: EngineInterface, run: { reason: string; taskOutcome?: TaskOutcome; durationMs: number; promptHead: string; answerHead: string; finishedAt: number }): Promise<string | undefined> {
   const settings = await readAppSettings($)
   const notify = settings?.remote?.enabled === true ? (settings.remote.notify ?? 'failures') : 'off'
-  if (notify === 'off' || (notify === 'failures' && run.reason === 'answer')) return undefined
+  // 'failures' sends failed runs only; 'all' sends the unverified answers too
+  if (notify === 'off' || (notify === 'failures' && outcomeOf(run) !== 'failed')) return undefined
   const label = labelOf(await $.session.cwd())
   const short = (await $.session.id()).slice(0, 8)
-  return `${NOTICE_MARK} ${runMark(run.reason)} ${fmtTime(run.finishedAt, run.finishedAt)} ${label} · ${short} · ${run.promptHead.slice(0, 50)} — ${run.reason} (${durText(run.durationMs)}): ${run.answerHead.slice(0, 80)}`
+  return `${NOTICE_MARK} ${runMark(run)} ${fmtTime(run.finishedAt, run.finishedAt)} ${label} · ${short} · ${run.promptHead.slice(0, 50)} — ${run.reason} (${durText(run.durationMs)}): ${run.answerHead.slice(0, 80)}`
 }

@@ -7,7 +7,7 @@ import { planPings } from '@shared/timeline'
 import type { AppSettings, UsageState, UsageWindow } from '@shared/types'
 
 import { api } from './api'
-import { t } from './i18n'
+import { fill, t } from './i18n'
 import { fmtAt } from './SchedulePanel'
 
 type Props = {
@@ -22,14 +22,15 @@ function tone(percent: number): 'ok' | 'warn' | 'danger' {
   return 'ok'
 }
 
-function Window({ row, now, boundaries, lang }: { row: UsageWindow; now: number; boundaries: number[]; lang: AppSettings['language'] }) {
+// stale: the last fetch failed, so the bar shows older values faded with this line first on hover
+function Window({ row, now, boundaries, lang, stale }: { row: UsageWindow; now: number; boundaries: number[]; lang: AppSettings['language']; stale?: string }) {
   const resetAt = row.resetsAt !== undefined ? Date.parse(row.resetsAt) : undefined
   const aligned = resetAt === undefined || row.key !== 'five_hour' || isAlignedReset(resetAt, boundaries)
   const label = row.key === 'five_hour' ? t(lang, 'fiveHour') : row.key === 'seven_day' ? t(lang, 'sevenDay') : `${row.label} ${t(lang, 'weekly')}`
   // the reset time shows on hover only (today: 12:59, another day: 10-24 05:00); the bar keeps the time left
   const resetText = resetAt === undefined ? '' : `${label} · ${lang === 'ko' ? `${fmtAt(resetAt, now)} 에 초기화` : `resets ${fmtAt(resetAt, now)}`}${aligned ? '' : ` (${t(lang, 'offBoundary')})`}`
   return (
-    <span className="cell" title={resetAt === undefined ? label : resetText}>
+    <span className={`cell ${stale !== undefined ? 'stale' : ''}`} title={[stale, resetAt === undefined ? label : resetText].filter(x => x !== undefined).join('\n')}>
       <span className="label">{label}</span>
       <span className="bar"><span className={`fill ${row.isCritical === true ? 'danger' : tone(row.percent)}`} style={{ width: `${Math.min(100, row.percent)}%` }} /></span>
       <span className={`pct ${row.isCritical === true ? 'danger-text' : ''}`}>{row.percent}%</span>
@@ -63,6 +64,7 @@ export function StatusBar({ usage, settings, overview, expanded, now, version, o
   const dot = usage.rows.length === 0 ? 'dim' : usage.isWaiting || usage.status !== '' ? 'warn' : 'ok'
   const fetched = usage.fetchedAt !== undefined ? new Date(usage.fetchedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
   const next = overview.nextSession
+  const stale = usage.isStale === true && usage.rows.length > 0 ? fill(t(lang, 'usageStale'), { at: fetched || '—' }) : undefined
 
   return (
     // refresh, remote monitor, settings, setup check and the guide are on the right-click menu (main process, strip:menu)
@@ -75,7 +77,7 @@ export function StatusBar({ usage, settings, overview, expanded, now, version, o
 ${t(lang, 'stripMenuHint')}`}>Claude</span>
           {settings.permission.mode === 'bypass' && <span className="pill danger" title="bypass permissions on">bypass</span>}
           {usage.rows.length === 0 && <span className="muted">{usage.status || t(lang, 'loading')}</span>}
-          {usage.rows.map(row => <Window key={row.key} row={row} now={now} boundaries={plan.boundaries} lang={lang} />)}
+          {usage.rows.map(row => <Window key={row.key} row={row} now={now} boundaries={plan.boundaries} lang={lang} stale={stale} />)}
           <span className="cell">
             <span className="label">{t(lang, 'nextJob')}</span>
             {next === undefined ? <span className="muted">—</span> : <span className="next-pill"><b>{fmtAt(next.nextAt, now)}</b> <span>{next.label}</span></span>}

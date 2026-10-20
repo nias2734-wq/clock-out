@@ -12,7 +12,7 @@ export type ClockOutJobView = {
   expiresInDays?: number     // ceil of days left; 0 when past
   isExpiringSoon: boolean    // within 2 days
   isDismissed: boolean
-  lastRun?: { finishedAt: number; reason: string; durationMs: number; answerHead?: string }
+  lastRun?: { finishedAt: number; reason: string; taskOutcome?: 'unverified' | 'failed'; durationMs: number; answerHead?: string }   // taskOutcome: an answer is unverified, not success
 }
 
 export type ClockOutSessionView = {

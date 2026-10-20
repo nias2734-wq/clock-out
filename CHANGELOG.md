@@ -4,6 +4,25 @@ One version for the plugin and the desktop app. `node scripts/version.js <x.y.z>
 `node scripts/version.js --check` verifies it. Each release is tagged `v<x.y.z>`.
 Versioning: **minor** for new features, **patch** for fixes only.
 
+## 0.13.0 (2026-10-20)
+
+Reliability and safety work after an external review of 0.12.0 (71/100). Three issues it reproduced are fixed (F-01, F-07, F-08 below).
+
+- **Instructions are not lost (F-01).** A message in a session's inbox is marked delivered only after it was submitted. A failed submit is retried (15 s, 60 s, 5 min; failed after 5 tries); one whose submit was cut off half-way is kept as "unknown" and not sent again. Each message and request has an id, the receiver ignores an id it already took, and requests are one file each (two requests for the same session no longer overwrite each other). Failed and unknown instructions show on the session in the jobs panel.
+- **"Answered" is not "succeeded" (F-02).** A run where Claude answered shows as "answered · success not verified"; a run that ended in an error shows as failed. "Failures only" notices go out for failed runs only. clock-out does not check build results yet.
+- **Renewal before the 7-day expiry can recover (F-03).** The job is written down before it is deleted; if the session stops between delete and create, the next start re-creates it. A job you deleted in the meantime is not brought back.
+- **The app no longer writes the plugin's session files (F-04).** Its own state (woken in the background, remote, hidden jobs, wake attempts, the permissions a session started with) lives in `app-state.json`, written atomically.
+- **Narrower default permissions (F-05).** New installs allow reading, editing and `git status/diff/log/fetch/pull`, `npm run build`, `npm test`, `npm ci`; `git push`, `git reset --hard`, `git clean`, `npm publish` and `rm -rf` are blocked (`--disallowedTools`). Saved settings are kept; Settings has "Use recommended defaults" and a block list editor. The jobs panel shows the permissions a session actually started with and warns when they differ from the settings.
+- **Fixed: the first message of a woken session could be eaten.** `--allowedTools` takes several values, so the message placed right after it was read as a tool name (measured with `claude -p`: "Input must be provided"). The permission mode now closes the lists.
+- **Waking retries (F-06).** A failed wake is retried after 5, 15, 45 and 120 s (then 10 min); a login or permission failure stops automatic waking and says why. Wakes of one session from the timer, the panel, the remote session and deletion run once.
+- **Same prompt, two jobs (F-07).** A run goes to the job whose time was within 2 minutes; otherwise it is recorded as ambiguous instead of being given to the first job.
+- **Fixed: weekday ranges ending in 7 (F-08)** such as `5-7` were rejected; app and plugin now share the same rule.
+- **Usage alignment is an experiment (F-09).** The ping is off on new installs and labelled experimental: the 5-hour window rule is observed, not guaranteed. The usage query times out after 15 s, a failed query only greys out the usage (jobs keep running), and the log records the kind of failure, never the error text of the credentials file.
+- **Missed jobs (REQ-06).** After sleep or a restart, jobs whose time passed while the PC was off are listed with Run now / Dismiss; they are not re-run automatically.
+- **"Hide" is now "No auto-wake" (F-10)**, which is what it does.
+- **Development**: `npm run types` / `npm run check` make the root type check reproducible on a fresh clone; GitHub Actions CI (app type check, tests and build; plugin tests on Claude Code 2.1.304, latest as a preview); SECURITY.md, CONTRIBUTING.md, issue and PR templates; the README lists the Claude Code versions this was checked with.
+- Tests: plugin 40 → 69, app 64 → 101.
+
 ## 0.12.0 (2026-10-20)
 
 - **Clear from list asks first**: one confirmation with the session's name and id, what happens (clear / stop and clear), why a terminal or remote session is only hidden, the warnings (waiting for an answer, an attach window) and the 7-day note — no second question after it.

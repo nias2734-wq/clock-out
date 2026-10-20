@@ -3,9 +3,15 @@ import { join } from 'node:path'
 
 import type { FSWatcher } from 'node:fs'
 
-import { jobsFromTranscript, liveTranscriptJobs, overviewOf, sessionFileFromTranscript, sessionViewOf, validateSessionFile, HEARTBEAT_STALE_MS } from '@shared/schedule'
+import { isStillMissed, missedOf } from '@shared/missed'
+import type { MissedJob } from '@shared/missed'
+import { permissionDiffers } from '@shared/revive'
+import { dismissedWith, jobsFromTranscript, liveTranscriptJobs, overviewOf, sessionFileFromTranscript, sessionViewOf, validateSessionFile, HEARTBEAT_STALE_MS } from '@shared/schedule'
 import type { Overview, SessionFile, SessionView } from '@shared/schedule'
+import type { AppState } from '@shared/types'
 
+import { patchSession, readAppState } from './appState'
+import { inboxProblems } from './inbox'
 import { log } from './log'
 import { paths } from './paths'
 import { getSettings, setSettings } from './settings'
@@ -41,7 +47,8 @@ export function liveSessions(): Map<string, LiveRecord> {
   return live
 }
 
-function pluginSessions(now: number, live: Map<string, LiveRecord>): SessionView[] {
+// files: every plugin session file read, normalized, for the missed-job check
+function pluginSessions(now: number, live: Map<string, LiveRecord>, app: AppState, files: Map<string, SessionFile>): SessionView[] {
   const views: SessionView[] = []
   let names: string[] = []
   try { names = readdirSync(paths.sessionsDir) } catch { return views }
@@ -54,8 +61,10 @@ function pluginSessions(now: number, live: Map<string, LiveRecord>): SessionView
     const isAlive = fresh || live.has(file.sessionId)
     let mtime = 0
     try { mtime = statSync(path).mtimeMs } catch { /* gone between list and stat */ }
-    const warnings = validateSessionFile({ ...file, dismissed: file.dismissed ?? [], jobs: file.jobs ?? [], runs: file.runs ?? [] }, mtime, now, file.cwd !== '' && existsSync(file.cwd))
-    const view = sessionViewOf({ ...file, dismissed: file.dismissed ?? [], jobs: file.jobs ?? [], runs: file.runs ?? [] }, now, isAlive, 'plugin', warnings, getSettings().doneCleared[file.sessionId])
+    const normal: SessionFile = { ...file, dismissed: dismissedWith(file.dismissed ?? [], app.sessions[file.sessionId]?.hidden), jobs: file.jobs ?? [], runs: file.runs ?? [] }
+    files.set(file.sessionId, normal)
+    const warnings = validateSessionFile(normal, mtime, now, file.cwd !== '' && existsSync(file.cwd))
+    const view = sessionViewOf(normal, now, isAlive, 'plugin', warnings, getSettings().doneCleared[file.sessionId])
     const bridge = live.get(file.sessionId)?.bridge
     if (bridge !== undefined) view.remoteUrl = `https://claude.ai/code/${bridge}`
     views.push(view)
@@ -64,7 +73,7 @@ function pluginSessions(now: number, live: Map<string, LiveRecord>): SessionView
 }
 
 // Transcripts under <config>/projects/*/<sessionId>.jsonl written in the last 8 days, newest first
-function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<string>): SessionView[] {
+function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<string>, app: AppState): SessionView[] {
   const views: SessionView[] = []
   let projects: string[] = []
   try { projects = readdirSync(join(paths.configDir, 'projects')) } catch { return views }
@@ -99,6 +108,7 @@ function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<s
     for (const j of cached.jobs) seenJobIds.add(j.id)
     if (own.length === 0) continue
     const file = sessionFileFromTranscript(f.sessionId, own)
+    file.dismissed = dismissedWith([], app.sessions[f.sessionId]?.hidden)
     const warnings = validateSessionFile(file, f.mtime, now, file.cwd !== '' && existsSync(file.cwd))
     views.push(sessionViewOf(file, now, live.has(f.sessionId), 'transcript', warnings, getSettings().doneCleared[f.sessionId]))
   }
@@ -109,22 +119,69 @@ let last: Overview = { builtAt: 0, sessions: [], jobCount: 0 }
 // remote.ts adds the remote jobs session's state (set from index.ts; schedule.ts must not import remote.ts)
 let remoteProvider: (() => Overview['remote']) | undefined
 export function setRemoteProvider(p: () => Overview['remote']): void { remoteProvider = p }
+// wake.ts tells which sessions it is waking now (set from wake.ts, which imports this file)
+let wakingProvider: ((sessionId: string) => boolean) | undefined
+export function setWakingProvider(p: (sessionId: string) => boolean): void { wakingProvider = p }
+// the remote jobs session's id (remoteState.ts), left out of the missed jobs
+let remoteSessionId: (() => string | undefined) | undefined
+export function setRemoteSessionProvider(p: () => string | undefined): void { remoteSessionId = p }
+
+// Missed jobs found so far (key → job): once found they stay until run, closed, deleted or a day old, even after the
+// session is up again (its plugin then moves nextFireAt on and the job would no longer look missed)
+const missedFound = new Map<string, MissedJob>()
+
+// The app's own state of each session (app-state.json) on its view: bgSince / remoteSince of older session files win
+function withAppState(s: SessionView, app: AppState, inbox: ReturnType<typeof inboxProblems>): void {
+  const st = app.sessions[s.sessionId]
+  if (st !== undefined) {
+    s.bgSince ??= st.bgSince
+    s.remoteSince ??= st.remoteSince
+    if (st.lastAttemptAt !== undefined || st.blocked !== undefined) {
+      s.wake = { lastAttemptAt: st.lastAttemptAt, lastSuccessAt: st.lastSuccessAt, nextRetryAt: st.nextRetryAt, failures: st.failures, blocked: st.blocked, lastError: st.lastError }
+    }
+    if (st.permissionAtStart !== undefined) {
+      s.permissionAtStart = st.permissionAtStart
+      s.permissionMismatch = permissionDiffers(st.permissionAtStart, getSettings().permission)
+    }
+  }
+  if (wakingProvider?.(s.sessionId) === true) s.wake = { ...s.wake, inProgress: true }
+  const box = inbox.get(s.sessionId)
+  if (box !== undefined) s.inbox = box
+}
+
+function missedNow(now: number, sessions: SessionView[], files: Map<string, SessionFile>, app: AppState): MissedJob[] {
+  const remote = remoteSessionId?.()
+  for (const s of sessions) {
+    const file = files.get(s.sessionId)
+    if (file === undefined || s.sessionId === remote || s.warnings.length > 0) continue
+    for (const m of missedOf(file, now, s.isAlive, file.dismissed, app.sessions[s.sessionId]?.missedDismissed)) missedFound.set(m.key, m)
+  }
+  for (const [key, m] of missedFound) {
+    if (!isStillMissed(m, files.get(m.sessionId), now, app.sessions[m.sessionId]?.missedDismissed)) missedFound.delete(key)
+  }
+  return [...missedFound.values()].sort((a, b) => a.dueAt - b.dueAt)
+}
 export function currentOverview(): Overview { return last }
 
 export function buildOverview(): Overview {
   const now = Date.now()
   const live = liveSessions()
-  const sessions = pluginSessions(now, live)
+  const app = readAppState()
+  const files = new Map<string, SessionFile>()
+  const sessions = pluginSessions(now, live, app, files)
   if (getSettings().legacyTranscriptScan) {
     const known = new Set(sessions.map(s => s.sessionId))
-    sessions.push(...transcriptSessions(now, live, known))
+    sessions.push(...transcriptSessions(now, live, known, app))
   }
+  const inbox = inboxProblems()
   for (const s of sessions) {
     const rec = live.get(s.sessionId)
     if (rec?.kind !== undefined) s.runsIn = rec.kind === 'bg' || rec.kind === 'background' ? 'background' : 'terminal'
     s.liveSince = rec?.startedAt
+    withAppState(s, app, inbox)
   }
-  last = { ...overviewOf(sessions, now), remote: remoteProvider?.() }
+  const missed = missedNow(now, sessions, files, app)
+  last = { ...overviewOf(sessions, now), remote: remoteProvider?.(), missed }
   // the remote jobs session's status tool reads this, so the phone and the app show the same list
   // (the plugin alone cannot see sessions found only in transcripts)
   try { writeFileSync(paths.overview, JSON.stringify(last), 'utf8') } catch { /* folder not there yet */ }
@@ -132,18 +189,14 @@ export function buildOverview(): Overview {
 }
 
 // Hides (or unhides) a job of a stopped session: the app then never revives that session for it.
-// Writes the plugin's own file format; a transcript-only session gets a minimal file.
+// Kept in the app's own app-state.json (hidden), which overrides the dismissed list older versions wrote into session files.
 export function toggleHide(jobId: string): string {
   const overview = buildOverview()
   const owner = overview.sessions.find(s => s.jobs.some(j => j.id === jobId))
   if (owner === undefined) return `No job ${jobId}`
   if (owner.isAlive) return `${jobId} belongs to running session ${owner.shortId}; delete it there with CronDelete`
-  const path = join(paths.sessionsDir, `${owner.sessionId}.json`)
-  const file = readJson<SessionFile>(path) ?? { version: 1 as const, sessionId: owner.sessionId, cwd: owner.cwd, alive: false, dismissed: [], jobs: [], runs: [] }
-  file.dismissed = file.dismissed ?? []
-  const hidden = !file.dismissed.includes(jobId)
-  file.dismissed = hidden ? [...file.dismissed, jobId] : file.dismissed.filter(id => id !== jobId)
-  writeFileSync(path, JSON.stringify(file, null, 2), 'utf8')
+  const hidden = owner.jobs.find(j => j.id === jobId)?.isDismissed !== true
+  patchSession(owner.sessionId, { hidden: { ...readAppState().sessions[owner.sessionId]?.hidden, [jobId]: hidden } })
   log(`HIDE ${jobId} ${hidden ? 'hidden' : 'shown'} (${owner.shortId})`)
   return hidden ? `Hidden ${jobId}` : `Unhidden ${jobId}`
 }

@@ -156,14 +156,14 @@ function QuickSteps({ lang }: { lang: Lang }) {
       {lang === 'ko' ? (
         <ol className="quick">
           <li>위 <b>연동 점검</b>에서 빨간 항목의 버튼을 누릅니다. 보통은 <b>플러그인 설치</b> 하나면 됩니다.</li>
-          <li><b>근무시간</b>(출근·점심·퇴근)을 설정에 넣습니다. 토큰 5시간 창이 점심 끝과 퇴근 시각에 초기화되도록 핑 시각이 계산됩니다.</li>
+          <li><b>근무시간</b>(출근·점심·퇴근)을 설정에 넣습니다. 정렬 핑(실험 기능, 기본 꺼짐)을 켜면 토큰 5시간 창이 점심 끝과 퇴근 시각에 초기화되도록 시도합니다.</li>
           <li>Claude Code 세션을 새로 열고 평소처럼 예약을 겁니다. 예: <code>"매일 21:03 에 develop 을 pull 해 줘"</code></li>
           <li>상태바의 <b>예약</b> 버튼으로 모든 세션의 예약을 봅니다. 세션을 꺼도 예약 시각 전에 이 앱이 다시 켭니다.</li>
         </ol>
       ) : (
         <ol className="quick">
           <li>In the <b>setup check</b> above, press the button of any red item — usually just <b>Install plugin</b>.</li>
-          <li>Enter your <b>work hours</b> in Settings; ping times are computed so the 5-hour window resets at lunch end and work end.</li>
+          <li>Enter your <b>work hours</b> in Settings; with the align ping on (experimental, off by default) the app tries to make the 5-hour window reset at lunch end and work end.</li>
           <li>Open a new Claude Code session and schedule as usual, e.g. <code>"pull develop every day at 21:03"</code>.</li>
           <li>Click <b>Jobs</b> on the status bar to see every session's jobs. Close a session — the app wakes it before the job is due.</li>
         </ol>

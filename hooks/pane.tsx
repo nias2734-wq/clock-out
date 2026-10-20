@@ -42,7 +42,7 @@ export function registerPane(on: On): void {
                 <Text dimColor={j.isDismissed} color={j.isExpiringSoon && !j.isDismissed ? 'yellow' : undefined} wrap="truncate-end">
                   {'  - '}[{j.id}] {j.humanSchedule} · next {fmtTime(j.nextAt, now)}
                   {j.isExpiringSoon && j.expiresInDays !== undefined ? ` · expires in ${j.expiresInDays}d` : ''}
-                  {j.lastRun !== undefined ? ` · last ${j.lastRun.reason === 'answer' ? 'ok' : j.lastRun.reason} ${fmtTime(j.lastRun.finishedAt, now)}` : ''}
+                  {j.lastRun !== undefined ? ` · last ${j.lastRun.reason === 'answer' ? 'answered (unverified)' : j.lastRun.reason} ${fmtTime(j.lastRun.finishedAt, now)}` : ''}
                   {j.isDismissed ? ' · hidden' : ''}
                   {width > 90 ? ` | ${j.prompt.replace(/\s+/g, ' ').slice(0, Math.max(10, width - 70))}` : ''}
                 </Text>

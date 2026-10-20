@@ -13,6 +13,7 @@ export type UsageState = {
   fetchedAt?: number       // epoch ms of the last successful fetch
   status: string           // '' | 'waiting until HH:mm' | error text
   isWaiting: boolean       // 429 backoff in effect
+  isStale?: boolean        // the last fetch failed (401, 429, timeout, network): rows are from fetchedAt, the jobs keep running
 }
 
 export type WorkHours = {
@@ -24,6 +25,27 @@ export type WorkHours = {
 }
 
 export type PermissionMode = 'work' | 'bypass'   // work = acceptEdits + allowed tools; bypass = --dangerously-skip-permissions
+
+// The permission a session got on its first background start (the flags go on that start only; later wakes keep it)
+export type PermissionRecord = { mode: PermissionMode; allowedTools: string[]; disallowedTools: string[]; at: number }
+
+// <config>/clock-out/app-state.json: what the app keeps per session. Only the app writes it (electron/main/appState.ts);
+// the plugin's session files (sessions/<id>.json) are the plugin's own and the app only reads them.
+export type AppSessionState = {
+  bgSince?: number                      // the app woke it with --bg for the first time (later wakes pass no flags)
+  remoteSince?: number                  // that first --bg start carried --remote-control
+  lastAttemptAt?: number                // the last `claude --bg --resume` the app ran for it
+  lastSuccessAt?: number                // the last wake that came up; the scheduler waits 30 min after it
+  nextRetryAt?: number                  // a failed wake is tried again from then (the scheduler skips it before)
+  failures?: number                     // failed attempts since the last success
+  blocked?: string                      // a login / permission failure: no automatic wake until a manual one succeeds
+  lastError?: string                    // the last failure's output, first 160 chars
+  permissionAtStart?: PermissionRecord  // recorded on the start that passed the permission flags
+  hidden?: Record<string, boolean>      // jobId → hidden from automatic wakes (true) or shown again (false); overrides the session file's dismissed
+  missedDismissed?: Record<string, number>   // '<jobId>@<dueAt>' → when the person closed that missed job (shared/missed.ts missedKey)
+}
+// requestsDone: ids of the plugin's requests (requests/*.json) already carried out, newest last, at most 200 (remote.ts)
+export type AppState = { version: 1; sessions: Record<string, AppSessionState>; requestsDone?: string[] }
 
 export type ThemeMode = 'system' | 'light' | 'dark'   // system = follow the Windows app mode
 
@@ -41,7 +63,7 @@ export type AppSettings = {
   workHours: WorkHours
   alignPing: { enabled: boolean; model: string; resetHours?: number[] }   // resetHours: chosen reset hours, absent = lunch end and 5 h later
   revive: { leadMinutes: number; expiryLeadHours: number; dailyAtEnd: boolean; confirmBefore: boolean; dryRun: boolean }
-  permission: { mode: PermissionMode; allowedTools: string[] }
+  permission: { mode: PermissionMode; allowedTools: string[]; disallowedTools: string[] }   // disallowedTools: --disallowedTools, refused even when allowed
   legacyTranscriptScan: boolean
   remote: RemoteSettings
   runMode: { default: RunMode; sessions: Record<string, RunMode> }   // sessions: per-session choice from the jobs panel (sessionId → mode)
@@ -64,9 +86,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   onboardingDone: false,
   statusBar: { expandedHeightRatio: 0.6 },
   workHours: { start: '09:00', lunchStart: '12:00', lunchEnd: '13:00', end: '18:00', weekdays: [1, 2, 3, 4, 5] },
-  alignPing: { enabled: true, model: 'haiku' },
+  alignPing: { enabled: false, model: 'haiku' },   // experimental: off on a new install, a saved choice stays
   revive: { leadMinutes: 10, expiryLeadHours: 24, dailyAtEnd: true, confirmBefore: false, dryRun: false },
-  permission: { mode: 'work', allowedTools: ['Bash(git *)', 'Bash(npm *)', 'Read', 'Edit', 'Write', 'Glob', 'Grep'] },
+  // recommended defaults; a saved allowedTools list stays as it is (settings.ts merge)
+  permission: {
+    mode: 'work',
+    allowedTools: ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)', 'Bash(git fetch*)', 'Bash(git pull*)', 'Bash(npm run build*)', 'Bash(npm test*)', 'Bash(npm run test*)', 'Bash(npm ci*)'],
+    disallowedTools: ['Bash(git push*)', 'Bash(git reset --hard*)', 'Bash(git clean*)', 'Bash(npm publish*)', 'Bash(rm -rf*)'],
+  },
   legacyTranscriptScan: false,
   remote: { enabled: false, permission: 'work', notify: 'failures' },
   runMode: { default: 'notify', sessions: {} },
@@ -97,6 +124,8 @@ export type ClockOutApi = {
   getSchedule: () => Promise<Overview>
   hideJob: (jobId: string) => Promise<string>
   reviveSession: (sessionId: string) => Promise<string>
+  runMissed: (sessionId: string, key: string) => Promise<string>       // a missed job (Overview.missed): wake its session with the job's prompt as the first message
+  dismissMissed: (sessionId: string, key: string) => Promise<string>   // close a missed job without running it
   attachSession: (sessionId: string) => Promise<string>
   openSession: (sessionId: string) => Promise<string>   // attach when it runs, else claude --resume in a terminal
   stopSession: (sessionId: string, confirmed?: boolean) => Promise<string>   // claude stop, background sessions only; refused with the reason when stopBlock says no, or when a warning came up that was not confirmed

@@ -1,6 +1,8 @@
 import type { EngineInterface, SessionEndInput, SessionStartInput } from 'claude-code'
 
+import { recordCronList } from './jobs'
 import { clockOutPaths } from './paths'
+import { recoverRenewal } from './reregister'
 import { touchStamp, updateOwnSession } from './sessionFile'
 
 const HEARTBEAT_MS = 60_000
@@ -35,7 +37,9 @@ async function findLiveRecord($: EngineInterface, sessionId: string): Promise<Li
 
 async function syncCronList($: EngineInterface): Promise<void> {
   try {
-    await $.tool.call({ tool: 'CronList' })   // jobs.ts records the answer
+    // recorded here: a call from this timer does not pass through jobs.ts's CronList hook
+    const listed = await $.tool.call({ tool: 'CronList' })
+    if (listed.deny === undefined && listed.isError !== true && listed.result !== undefined) await recordCronList($, listed.result.jobs)
   } catch {
     // refused or unavailable: the file keeps what it had
   }
@@ -55,15 +59,19 @@ export async function startHeartbeat($: EngineInterface, e: SessionStartInput): 
       delete file.endReason
       if (live.pid !== undefined) file.pid = live.pid
       if (live.kind !== undefined) file.kind = live.kind
+      // kept after a later terminal resume overwrites kind: a session that ran with --bg has saved options, so later wakes pass no flags
+      if (live.kind === 'background' && file.bgSince === undefined) file.bgSince = now
       if (live.name !== undefined) file.name = live.name
     })
     await touchStamp($)
 
-    $.clock.after(CRONLIST_SYNC_DELAY_MS, () => { void syncCronList($) })
+    // an unfinished 7-day renewal is checked against CronList at start and on every heartbeat
+    $.clock.after(CRONLIST_SYNC_DELAY_MS, () => { void syncCronList($).then(() => recoverRenewal($)).catch(() => undefined) })
     $.clock.every(HEARTBEAT_MS, () => {
       void (async () => {
         const at = await $.clock.now()
         await updateOwnSession($, file => { file.alive = true; file.heartbeatAt = at })
+        await recoverRenewal($).catch(() => undefined)
       })()
     })
 }

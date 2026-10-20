@@ -35,7 +35,9 @@ export function parseCron(cron: string): CronSpec | undefined {
   const hour = fieldSet(f[1] ?? '', 0, 23)
   const dom = fieldSet(f[2] ?? '', 1, 31)
   const month = fieldSet(f[3] ?? '', 1, 12)
-  const dow = fieldSet((f[4] ?? '').replace(/\b7\b/g, '0'), 0, 6)
+  // day-of-week: ranges expand over 0-7 first, then 7 becomes 0 (5-7 is Fri-Sun; 7-5 is refused)
+  const dowRaw = fieldSet(f[4] ?? '', 0, 7)
+  const dow = dowRaw === undefined ? undefined : new Set([...dowRaw].map(d => (d === 7 ? 0 : d)))
   if (!minute || !hour || !dom || !month || !dow) return undefined
   return { minute, hour, dom, month, dow, domAny: f[2] === '*', dowAny: f[4] === '*' }
 }

@@ -1,10 +1,12 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { readAppSettings } from './appSettings'
-import { touchStamp, updateOwnSession } from './sessionFile'
+import { clockOutPaths, sessionFilePath } from './paths'
+import { renewalDeletes } from './reregister'
+import { readSessionFile, touchStamp, updateOwnSession } from './sessionFile'
 import { liveJobs, RUN_MODES, WEEK_MS } from './schema'
 import { checkZone } from './zoneGuard'
-import type { Job, RunMode } from './schema'
+import type { Job, Renewal, RunMode } from './schema'
 
 // job_mode: the model sets how the app shows a job when it fires (jobs[].mode). Every session gets it, unlike the
 // remote jobs session's tools (status / send / open_remote in remote.ts).
@@ -76,12 +78,28 @@ async function modeHint($: EngineInterface, jobId: string): Promise<string> {
     : `clock-out: 이 예약(jobId "${jobId}")의 실행 방식을 정하세요. 리마인더·사용자에게 묻는 일·사용자가 결과를 직접 봐야 하는 예약이면 ${tool} 를 mode "open" 으로, 실행 사실만 알면 되면 "notify" 로 부르고, 무인 작업이면 부르지 않아도 됩니다(앱 기본값). 정한 방식을 사용자에게 한 줄로 알려 주세요.`
 }
 
+// The renewal (reregister.ts) this CronCreate re-creates: same cron and prompt, the old job already deleted
+function isRenewalOf(renewal: Renewal | undefined, cron: string, prompt: string): renewal is Renewal {
+  return renewal !== undefined && renewal.phase !== 'intent' && renewal.cron === cron && renewal.prompt.trim() === prompt.trim()
+}
+
+async function renewalOf($: EngineInterface, cron: string, prompt: string): Promise<boolean> {
+  try {
+    const file = await readSessionFile($, sessionFilePath(await clockOutPaths($), await $.session.id()))
+    return isRenewalOf(file?.renewal, cron, prompt)
+  } catch {
+    return false
+  }
+}
+
 // Records what the model (or this plugin) does with CronCreate / CronDelete / CronList into the session file.
 // The tool result is the source: CronCreate answers the job id and nextFireAt (the real next run, scheduler offset included).
 export function registerJobs(on: On): void {
   on('tool.call', { tool: 'CronCreate' }, async ($, e, next) => {
     // 1. 근무일에 비워 둘 시간(예: 04:00 ~ 09:00)에 도는 예약은 한 번 거절해 사용자에게 묻게 한다
-    const refusal = await checkZone($, e.cron).catch(() => undefined)
+    //    갱신 중인 예약을 다시 만드는 것(옛 예약은 이미 지움)은 사용자가 고른 시각이므로 묻지 않는다
+    const renewing = await renewalOf($, e.cron, e.prompt)
+    const refusal = renewing ? undefined : await checkZone($, e.cron).catch(() => undefined)
     if (refusal !== undefined) return { deny: refusal }
     // 2. 걸린 예약을 세션 파일에 기록
     const ran = await next(e)
@@ -102,8 +120,11 @@ export function registerJobs(on: On): void {
     await updateOwnSession($, file => {
       // 7일 만료 전 재등록(reregister.ts)이면 지워진 옛 예약의 실행 방식을 이어받는다
       const renewed = file.jobs.filter(j => j.mode !== undefined && j.reregisterTriedAt !== undefined && j.cron === job.cron && j.prompt.trim() === job.prompt.trim()).pop()
-      if (renewed?.mode !== undefined) { job.mode = renewed.mode; inherited = true }
+      const renewal = isRenewalOf(file.renewal, job.cron, job.prompt) ? file.renewal : undefined
+      const mode = renewal?.mode ?? renewed?.mode
+      if (mode !== undefined) { job.mode = mode; inherited = true }
       file.jobs = [...file.jobs.filter(j => j.id !== job.id), job]
+      if (renewal !== undefined) delete file.renewal   // 갱신의 새 예약이 생겼으므로 갱신 기록을 지운다
     })
     await touchStamp($)
     // 3. 모델에게 job_mode 로 실행 방식을 정하라고 한 줄 덧붙인다(사용자에게는 안 보임)
@@ -123,8 +144,11 @@ export function registerJobs(on: On): void {
     if (ran.deny !== undefined || ran.result === undefined || ran.isError === true) return ran
     const id = ran.result.id
     const now = await $.clock.now()
+    const byRenewal = renewalDeletes.has(id)
     await updateOwnSession($, file => {
       for (const j of file.jobs) if (j.id === id && j.deletedAt === undefined) j.deletedAt = now
+      // 갱신이 지운 것은 같은 쓰기에서 old_removed 로 — intent 인 채로 deletedAt 이 있으면 사용자가 지운 것
+      if (byRenewal && file.renewal?.oldId === id) file.renewal.phase = 'old_removed'
     })
     await touchStamp($)
     return ran
@@ -135,33 +159,40 @@ export function registerJobs(on: On): void {
   on('tool.call', { tool: 'CronList' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny !== undefined || ran.result === undefined || ran.isError === true) return ran
-    const listed = ran.result.jobs
-    const now = await $.clock.now()
-    let changed = false
-    await updateOwnSession($, file => {
-      const seen = new Set<string>()
-      for (const l of listed) {
-        seen.add(l.id)
-        const known = file.jobs.find(j => j.id === l.id)
-        if (known === undefined) {
-          const recurring = l.recurring !== false
-          const job: Job = { id: l.id, cron: l.cron, prompt: l.prompt, recurring, humanSchedule: l.humanSchedule, createdAt: now, nextFireAt: l.nextFireAt }
-          if (recurring) job.expiresAt = now + WEEK_MS
-          file.jobs.push(job)
-          changed = true
-        } else {
-          if (known.nextFireAt !== l.nextFireAt) { known.nextFireAt = l.nextFireAt; changed = true }
-          if (known.goneAt !== undefined) { delete known.goneAt; changed = true }   // came back (restored by --resume)
-        }
-      }
-      for (const j of file.jobs) {
-        if (!seen.has(j.id) && j.deletedAt === undefined && j.goneAt === undefined && j.firedAt === undefined) {
-          j.goneAt = now
-          changed = true
-        }
-      }
-    })
-    if (changed) await touchStamp($)
+    await recordCronList($, ran.result.jobs)
     return ran
   }).catch((_$, e, next) => next(e))   // 기록 중 실패해도 도구 호출 결과는 그대로 흘려보낸다
+}
+
+export type ListedJob = { id: string; cron: string; prompt: string; recurring?: boolean; humanSchedule?: string; nextFireAt?: number }
+
+// Syncs the session file to a CronList answer. Called by the hook above and by heartbeat.ts, whose timer call does
+// not pass through this plugin's own tool.call hooks (as the test kit shows).
+export async function recordCronList($: EngineInterface, listed: readonly ListedJob[]): Promise<void> {
+  const now = await $.clock.now()
+  let changed = false
+  await updateOwnSession($, file => {
+    const seen = new Set<string>()
+    for (const l of listed) {
+      seen.add(l.id)
+      const known = file.jobs.find(j => j.id === l.id)
+      if (known === undefined) {
+        const recurring = l.recurring !== false
+        const job: Job = { id: l.id, cron: l.cron, prompt: l.prompt, recurring, humanSchedule: l.humanSchedule, createdAt: now, nextFireAt: l.nextFireAt }
+        if (recurring) job.expiresAt = now + WEEK_MS
+        file.jobs.push(job)
+        changed = true
+      } else {
+        if (known.nextFireAt !== l.nextFireAt) { known.nextFireAt = l.nextFireAt; changed = true }
+        if (known.goneAt !== undefined) { delete known.goneAt; changed = true }   // came back (restored by --resume)
+      }
+    }
+    for (const j of file.jobs) {
+      if (!seen.has(j.id) && j.deletedAt === undefined && j.goneAt === undefined && j.firedAt === undefined) {
+        j.goneAt = now
+        changed = true
+      }
+    }
+  })
+  if (changed) await touchStamp($)
 }

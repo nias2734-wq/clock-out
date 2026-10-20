@@ -12,7 +12,7 @@ import { clearDone } from './schedule'
 import { getSettings } from './settings'
 
 // Stops background sessions that are done (each holds about 0.5 GB): the panel's "stop session" button after a fresh
-// check, and the automatic cleanup on the scheduler's 30 s tick (revive.ts startScheduler). The two commands it needs
+// check, and the automatic cleanup on the scheduler's 30 s tick (wake.ts startScheduler). The two commands it needs
 // (`claude agents`, the attach windows) run only when a session is about to be stopped or the panel asks.
 
 const CHECK_KEPT_MS = 15_000         // the panel asks again on every selection; one answer serves them for this long

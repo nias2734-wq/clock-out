@@ -1,0 +1,104 @@
+name: Bug report / 버그 신고
+description: Something did not work as expected / 기대와 다르게 동작함
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problem? Do not open an issue — see [SECURITY.md](https://github.com/nias2734-wq/clock-out/blob/main/SECURITY.md).
+        보안 문제는 이슈로 올리지 말고 [SECURITY.md](https://github.com/nias2734-wq/clock-out/blob/main/SECURITY.md) 를 보세요.
+
+        Replace real session ids, session names and paths with your user name by placeholders.
+        실제 세션 id, 세션 이름, 사용자 이름이 든 경로는 예시 값으로 바꿔 주세요.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem / 어떤 문제인가요
+      options:
+        - A stopped session was not woken / 꺼진 세션이 깨어나지 않음
+        - A job did not run, or I noticed a missed job late / 예약이 실행되지 않음, 또는 누락을 늦게 알았음
+        - A job failed but looked successful / 작업이 실패했는데 성공으로 보임
+        - Renewal (7-day expiry) went wrong / 7일 만료 재등록이 잘못됨
+        - Remote session or instructions / 원격 세션·지시 전달
+        - App screen (status bar, jobs panel, settings, setup check) / 앱 화면
+        - Install, update or uninstall / 설치·업데이트·제거
+        - Other / 기타
+    validations:
+      required: true
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version / Claude Code 버전
+      description: "`claude --version`"
+      placeholder: 2.1.304 (Claude Code)
+    validations:
+      required: true
+
+  - type: input
+    id: clockout-version
+    attributes:
+      label: clock-out version (app and plugin) / clock-out 버전(앱·플러그인)
+      description: App version is shown in the app's Settings; plugin version in `claude plugin list`. / 앱 버전은 앱 설정 창, 플러그인 버전은 `claude plugin list` 에서 볼 수 있습니다.
+      placeholder: app 0.12.0, plugin 0.12.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How clock-out is installed / 설치 방법
+      options:
+        - Desktop app (installer) / 데스크톱 앱(설치 파일)
+        - Plugin only / 플러그인만
+        - Both, or not sure / 둘 다, 또는 모름
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version / Windows 버전
+      placeholder: Windows 11 24H2
+
+  - type: textarea
+    id: session-state
+    attributes:
+      label: Session state / 세션 상태
+      description: |
+        The state the jobs panel showed for the session (running in a terminal, background, remote, stopped), the run mode, the permission mode (work / bypass), and whether the PC slept.
+        예약 창에 보인 세션 상태(터미널에서 실행 중·백그라운드·원격·꺼짐), 실행 방식, 권한 모드(작업 가능 / bypass), PC 가 절전에 들어갔는지.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected / 일어난 일과 기대한 일
+      description: Include the job's schedule (cron or the sentence you used) and the times. / 예약 시각(cron 이나 예약을 건 문장)과 시각을 같이 적어 주세요.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 재현 절차
+
+  - type: textarea
+    id: app-log
+    attributes:
+      label: app.log excerpt / app.log 발췌
+      description: |
+        `~/.claude/clock-out/app.log` (or `<CLAUDE_CONFIG_DIR>/clock-out/app.log`), the lines around the problem time.
+        clock-out does not write the login token there, but **check before pasting** that no token (`sk-ant-…`), `Bearer …` or `.credentials.json` content is in it, and replace session ids and user names.
+        문제 시각 앞뒤 줄을 붙여 주세요. clock-out 은 로그인 토큰을 이 파일에 쓰지 않지만, **붙이기 전에** 토큰(`sk-ant-…`), `Bearer …`, `.credentials.json` 내용이 없는지 확인하고 세션 id·사용자 이름을 바꿔 주세요.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting / 올리기 전에
+      options:
+        - label: I checked that nothing I pasted contains a token or real session ids. / 붙인 내용에 토큰이나 실제 세션 id 가 없는지 확인했습니다.
+          required: true

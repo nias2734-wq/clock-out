@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { BrowserWindow, Menu, Tray, app, clipboard, ipcMain, nativeImage, nativeTheme, screen, shell } from 'electron'
+import { BrowserWindow, Menu, Tray, app, clipboard, ipcMain, nativeImage, nativeTheme, powerMonitor, screen, shell } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 
 import { remoteIsOn } from '@shared/schedule'
@@ -11,11 +11,14 @@ import { log } from './log'
 import { paths } from './paths'
 import { pingTick } from './ping'
 import { deleteJob } from './deleteJob'
-import { attachSession, notice, onNotice, openSession, openTerminal, reviveSession, startScheduler } from './revive'
+import { checkMissed, dismissMissed, runMissed } from './missed'
+import { readRemoteState } from './remoteState'
+import { attachSession, notice, onNotice, openSession, openTerminal } from './revive'
+import { startScheduler, wakeSession } from './wake'
 import { onRemoteSettings, openMonitor, remoteView, startRemote } from './remote'
 import { checkRuns, startRunWatch } from './runWatch'
 import { autoCleanup, clearSession, stopCheck, stopIfDone, tidyDone } from './cleanup'
-import { buildOverview, currentOverview, setRemoteProvider, toggleHide, watchSchedule } from './schedule'
+import { buildOverview, currentOverview, setRemoteProvider, setRemoteSessionProvider, toggleHide, watchSchedule } from './schedule'
 import { getSettings, setSettings } from './settings'
 import { bundledPluginDir, checkSetup, runFix } from './setup'
 import { currentUsage, fetchUsage } from './usage'
@@ -320,7 +323,18 @@ function registerIpc(): void {
   ipcMain.handle('schedule:revive', async (_e, sessionId: string) => {
     const s = buildOverview().sessions.find(x => x.sessionId === sessionId)
     if (s === undefined) return `no session ${String(sessionId).slice(0, 8)}`
-    return (await reviveSession(s, 'asked from the panel')).message
+    return (await wakeSession(s, 'asked from the panel')).message
+  })
+  // missed jobs (Overview.missed): run one now (its prompt as the first message) or close it
+  ipcMain.handle('schedule:runMissed', async (_e, sessionId: string, key: string) => {
+    const text = await runMissed(String(sessionId), String(key))
+    broadcast('schedule', buildOverview())
+    return text
+  })
+  ipcMain.handle('schedule:dismissMissed', (_e, sessionId: string, key: string) => {
+    const text = dismissMissed(String(sessionId), String(key))
+    broadcast('schedule', buildOverview())
+    return text
   })
   ipcMain.handle('schedule:delete', (_e, sessionId: string, jobId: string) => deleteJob(String(sessionId), String(jobId)))
   ipcMain.handle('schedule:stop', async (_e, sessionId: string, confirmed: boolean) => {
@@ -386,6 +400,8 @@ if (!app.requestSingleInstanceLock()) {
       void fetchUsage().then(pushUsage)
       if (SHOT_DIR !== undefined) void (async () => {
         const win = strip as BrowserWindow
+        // selects the session whose row shows this text (the 0.13 captures use the fake folders nightly-build and report-bot)
+        const pick = (text: string) => `[...document.querySelectorAll('.session')].find(b => b.textContent.includes('${text}'))?.click()`
         await sleep(4000); await shot(win, 'statusbar')
         // the right-click menu is a native popup a capture does not see: its items go to the log
         log(`SHOT strip menu ${menuOf(STRIP_MENU).map(m => m.label ?? '—').join(' | ')}`)
@@ -436,6 +452,14 @@ if (!app.requestSingleInstanceLock()) {
           log(`SHOT monitor button ${String(await panelWin.webContents.executeJavaScript("document.querySelector('.panel-footer .lucide-smartphone')?.closest('button')?.title ?? ''"))}`)
           await panelWin.webContents.executeJavaScript("document.querySelector('.modal .btn.ghost')?.click()")
           await sleep(500)
+          // 0.13: missed jobs on top, a session the app could not wake (login, not delivered, permission differs) with its
+          // results unfolded, and one whose wake is retried later
+          await panelWin.webContents.executeJavaScript(pick('nightly-build'))
+          await sleep(1500); await shot(panelWin, 'schedule-alerts')
+          await panelWin.webContents.executeJavaScript("document.querySelector('.detail > .cards > .card-head .btn.ghost.tiny')?.click(); setTimeout(() => { const d = document.querySelector('.detail'); if (d) d.scrollTop = d.scrollHeight }, 300)")
+          await sleep(1200); await shot(panelWin, 'schedule-alerts-done')
+          await panelWin.webContents.executeJavaScript(pick('report-bot'))
+          await sleep(1500); await shot(panelWin, 'schedule-retry')
           await panelWin.webContents.executeJavaScript("document.querySelector('.session')?.click()")
         }
         openSettings(); await sleep(6000); if (settingsWin !== undefined) await shot(settingsWin, 'settings')
@@ -452,6 +476,13 @@ if (!app.requestSingleInstanceLock()) {
           // the job run mode section (its h2 holds the bell icon)
           await settingsWin.webContents.executeJavaScript("document.querySelector('.lucide-bell')?.closest('section')?.scrollIntoView()")
           await sleep(1000); await shot(settingsWin, 'settings-runmode')
+          // the permission section (shield icon), the align ping's experimental note (flask icon), then back to the timeline
+          await settingsWin.webContents.executeJavaScript("document.querySelector('h2 .lucide-shield')?.closest('section')?.scrollIntoView()")
+          await sleep(1000); await shot(settingsWin, 'settings-permission')
+          await settingsWin.webContents.executeJavaScript("document.querySelector('.lucide-flask-conical')?.closest('.note')?.scrollIntoView({ block: 'center' })")
+          await sleep(1000); await shot(settingsWin, 'settings-ping')
+          await settingsWin.webContents.executeJavaScript("document.querySelector('.timeline')?.closest('section')?.scrollIntoView()")
+          await sleep(500)
         }
         openGuide(); await sleep(9000); if (guideWin !== undefined) await shot(guideWin, 'guide')
         openSetup(); await sleep(9000); if (setupWin !== undefined) await shot(setupWin, 'setup')
@@ -461,6 +492,11 @@ if (!app.requestSingleInstanceLock()) {
         // a window covered by another one is not repainted after the theme change: bring it up first
         if (settingsWin !== undefined) { settingsWin.focus(); await sleep(1000); await shot(settingsWin, `settings-timeline-${other}`) }
         if (setupWin !== undefined) await shot(setupWin, `setup-${other}`)
+        if (panelWin !== undefined) { panelWin.focus(); await panelWin.webContents.executeJavaScript(pick('nightly-build')); await sleep(1200); await shot(panelWin, `schedule-alerts-${other}`) }
+        if (settingsWin !== undefined) {
+          settingsWin.focus(); await settingsWin.webContents.executeJavaScript("document.querySelector('h2 .lucide-shield')?.closest('section')?.scrollIntoView()")
+          await sleep(1000); await shot(settingsWin, `settings-permission-${other}`)
+        }
         setExpanded(false); await sleep(1500); await shot(win, `statusbar-${other}`)
         applyTheme()
         app.quit()
@@ -468,13 +504,19 @@ if (!app.requestSingleInstanceLock()) {
     })
     setInterval(() => { void fetchUsage().then(pushUsage) }, USAGE_INTERVAL_MS)
     setRemoteProvider(remoteView)   // before the first overview is built
+    setRemoteSessionProvider(() => readRemoteState().sessionId)
     watchSchedule(o => { broadcast('schedule', o); checkRuns(o) }, 30_000)
     onNotice((text, kind) => broadcast('notice', text, kind))
-    if (SHOT_DIR === undefined && process.env.CLOCKOUT_REVIVE === undefined) { startScheduler(autoCleanup); startRemote(); startRunWatch(); setInterval(pingTick, 60_000); pingTick() }
+    if (SHOT_DIR === undefined && process.env.CLOCKOUT_REVIVE === undefined) {
+      startScheduler(autoCleanup); startRemote(); startRunWatch(); setInterval(pingTick, 60_000); pingTick()
+      // jobs that went by while the PC was off or asleep: one notice, nothing runs on its own (missed.ts)
+      checkMissed('start')
+      powerMonitor.on('resume', () => { try { checkMissed('resume'); broadcast('schedule', currentOverview()) } catch (err) { log(`MISSED error ${String(err)}`) } })
+    }
     // dev: CLOCKOUT_REVIVE=<session id> wakes that session once and quits
     if (process.env.CLOCKOUT_REVIVE !== undefined) {
       const target = buildOverview().sessions.find(x => x.sessionId.startsWith(process.env.CLOCKOUT_REVIVE as string))
-      void (target === undefined ? Promise.resolve({ ok: false, message: 'no such session' }) : reviveSession(target, 'dev')).then(r => { log(`DEVREVIVE ${r.message}`); app.quit() })
+      void (target === undefined ? Promise.resolve({ ok: false, message: 'no such session' }) : wakeSession(target, 'dev')).then(r => { log(`DEVREVIVE ${r.message}`); app.quit() })
     }
     app.setLoginItemSettings({ openAtLogin: getSettings().launchAtLogin })
   }).catch(err => { log(`START failed ${String(err)}`); app.quit() })

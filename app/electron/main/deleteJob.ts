@@ -1,14 +1,12 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-
 import { describeCron } from '@shared/cronText'
 import type { JobView, SessionView } from '@shared/schedule'
 
+import { postInbox } from './inbox'
 import { log } from './log'
-import { paths } from './paths'
-import { readFile, reviveSession, runClaude } from './revive'
+import { readFile, runClaude } from './revive'
 import { buildOverview, liveSessions } from './schedule'
 import { getSettings } from './settings'
+import { wakeSession } from './wake'
 
 // Deleting a job from the jobs panel. A job lives only inside its session, so the session itself deletes it
 // (CronDelete); the app only gets the instruction there, and waits until the job leaves the list:
@@ -39,14 +37,6 @@ function instruction(j: JobView, lang: 'ko' | 'en'): string {
     : `The user asked from the clock-out app to delete one job of this session: id ${j.id}, cron "${j.cron}", "${j.prompt.replace(/\s+/g, ' ').slice(0, 80)}". CronDelete only this job and answer in one line. Leave the other jobs alone.`
 }
 
-let posted = 0
-function postInbox(sessionId: string, text: string): void {
-  const dir = join(paths.inboxDir, sessionId)
-  mkdirSync(dir, { recursive: true })
-  const at = Date.now()
-  writeFileSync(join(dir, `${at}-del${posted++}.json`), JSON.stringify({ text, at, from: 'app' }, null, 2), 'utf8')
-}
-
 const stillListed = (sessionId: string, jobId: string) => buildOverview().sessions.find(s => s.sessionId === sessionId)?.jobs.some(j => j.id === jobId) === true
 
 export async function deleteJob(sessionId: string, jobId: string): Promise<DeleteResult> {
@@ -61,7 +51,7 @@ export async function deleteJob(sessionId: string, jobId: string): Promise<Delet
   log(`DELETE ${view.shortId} ${job.id} (${view.isAlive ? view.runsIn ?? 'running' : 'stopped'}, plugin ${hasPlugin})`)
 
   if (view.isAlive && hasPlugin) {
-    postInbox(sessionId, message)
+    postInbox(sessionId, message, 'del')
   } else if (view.isAlive && view.runsIn === 'terminal') {
     return {
       ok: false,
@@ -77,7 +67,7 @@ export async function deleteJob(sessionId: string, jobId: string): Promise<Delet
         return { ok: false, text: ko ? `${view.shortId} 을 멈추지 못해 삭제를 전달하지 못했습니다.` : `Could not stop ${view.shortId} to pass the deletion.`, canStop: false }
       }
     }
-    const woke = await reviveSession({ ...view, isAlive: false }, 'delete a job', { message })
+    const woke = await wakeSession({ ...view, isAlive: false }, 'delete a job', { message })
     if (!woke.ok) return { ok: false, text: ko ? `세션을 깨우지 못했습니다: ${woke.message}` : `Could not wake the session: ${woke.message}`, canStop: false }
   }
 

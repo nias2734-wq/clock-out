@@ -1,26 +1,24 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { Notification } from 'electron'
 
-import { copyIdIn, dailySweepHm, isPastDailyTime, reopenReason, reviveArgs } from '@shared/revive'
+import { copyIdIn, permissionRecord, reviveArgs } from '@shared/revive'
 import { wasBackgroundIn } from '@shared/runMode'
-import type { Overview, SessionFile, SessionView } from '@shared/schedule'
+import type { SessionFile, SessionView } from '@shared/schedule'
+import type { AppSessionState } from '@shared/types'
 
+import { patchSession, sessionState } from './appState'
 import { log } from './log'
-import { isRemoteSession } from './remoteState'
 import { paths } from './paths'
-import { buildOverview } from './schedule'
 import { getSettings } from './settings'
 
-// Wakes stopped sessions with `claude --bg --resume <id>` and keeps the in-app scheduler that decides when.
+// Wakes stopped sessions with `claude --bg --resume <id>` (one attempt; wake.ts holds the lock, retries and the scheduler).
 // Measured rules (see the plugin's revive.ts): flags only on the first background start; a copy started by
 // stray flags is stopped at once; `claude agents --json --all` may miss a session for seconds after `claude stop`.
 
 const RUN_TIMEOUT_MS = 90_000
-const REVIVE_GUARD_MS = 30 * 60 * 1000   // the same session is not woken twice within this
-const TICK_MS = 30_000
 
 type Listener = (text: string, kind: 'info' | 'warn') => void
 const listeners = new Set<Listener>()
@@ -51,21 +49,22 @@ export function readFile(sessionId: string): SessionFile | undefined {
   try { return JSON.parse(readFileSync(join(paths.sessionsDir, `${sessionId}.json`), 'utf8').replace(/^﻿/, '')) as SessionFile } catch { return undefined }
 }
 
-const lastWoken = new Map<string, number>()
-let dailyDate = ''
-
 export type ReviveResult = { ok: boolean; message: string }
+// One attempt: ok, or the failure with claude's output (wake.ts decides from it whether to try again)
+export type AttemptResult = ReviveResult & { output?: string; code?: number }
 
+// One `claude --bg --resume` attempt; wake.ts adds the per-session lock, the retries and the attempt records.
 // message: the first message (an instruction forwarded from the remote jobs session), else the fixed check message.
 // forceRemote: attach Remote Control on this first background start (open_remote from the remote jobs session).
-export async function reviveSession(s: SessionView, reason: string, opts: { message?: string; forceRemote?: boolean } = {}): Promise<ReviveResult> {
+export async function reviveOnce(s: SessionView, reason: string, opts: { message?: string; forceRemote?: boolean } = {}): Promise<AttemptResult> {
   const settings = getSettings()
-  if (s.isAlive) return { ok: false, message: `${s.shortId} is already running` }
   if (s.warnings.length > 0) return { ok: false, message: `${s.shortId} is not trusted: ${s.warnings.join(', ')}` }
   const file = readFile(s.sessionId)
-  // ran in the background before (then it has saved options and flags would start a copy): woken by clock-out,
-  // recorded by its own plugin at start, or listed by `claude agents` (which misses it for a few seconds after a stop)
-  const wasBg = file?.bgSince !== undefined || file?.kind === 'background' || (await wasBackgroundBefore(s.sessionId))
+  const app = sessionState(s.sessionId)
+  // ran in the background before (then it has saved options and flags would start a copy): woken by clock-out (app-state,
+  // or the session file before 0.13), recorded by its own plugin at start, or listed by `claude agents` (which misses it
+  // for a few seconds after a stop)
+  const wasBg = file?.bgSince !== undefined || app.bgSince !== undefined || file?.kind === 'background' || (await wasBackgroundBefore(s.sessionId))
   const withRemote = !wasBg && opts.forceRemote === true
   const args = reviveArgs(s.sessionId, wasBg, settings.permission, withRemote ? `clock-out · ${s.label}` : undefined, opts.message)
   if (settings.revive.dryRun) {
@@ -73,15 +72,16 @@ export async function reviveSession(s: SessionView, reason: string, opts: { mess
     log(`DRYRUN ${s.shortId} would run: claude ${shown} "<message>" (${reason})`)
     return { ok: true, message: `[dry run] ${s.shortId}: claude ${shown}` }
   }
-  lastWoken.set(s.sessionId, Date.now())
   const ran = await runClaude(args, s.cwd)
   if (ran.code !== 0) {
-    notice(`${s.shortId}: could not wake (exit ${ran.code}) ${ran.output.trim().slice(0, 160)}`, 'warn')
-    return { ok: false, message: `${s.shortId}: claude failed (exit ${ran.code})` }
+    log(`WAKE ${s.shortId} failed (exit ${ran.code}) ${ran.output.trim().slice(0, 160)}`)
+    return { ok: false, message: `${s.shortId}: claude failed (exit ${ran.code})`, output: ran.output, code: ran.code }
   }
   let note = ''
+  let flagsTook = !wasBg
   const copy = copyIdIn(ran.output)
   if (copy !== undefined) {
+    flagsTook = false
     const stopped = await runClaude(['stop', copy], undefined)
     // a stopped copy still sits in `claude agents`: remove it like ensureRemote does
     if (stopped.code === 0) await runClaude(['rm', copy], undefined)
@@ -89,20 +89,18 @@ export async function reviveSession(s: SessionView, reason: string, opts: { mess
     // the session had saved options after all: wake the session itself without flags, with the same message
     const again = await runClaude(reviveArgs(s.sessionId, true, settings.permission, undefined, opts.message), s.cwd)
     if (again.code !== 0 || copyIdIn(again.output) !== undefined) {
-      notice(`${s.shortId}: could not wake without flags either (exit ${again.code})`, 'warn')
-      return { ok: false, message: `${s.shortId}: claude failed after a copy${note}` }
+      log(`WAKE ${s.shortId} failed without flags too (exit ${again.code})`)
+      return { ok: false, message: `${s.shortId}: claude failed after a copy${note}`, output: again.output, code: again.code === 0 ? 1 : again.code }
     }
     note += ', woken again without flags'
   }
-  // bgSince on the stopped session's file: the woken session's own module keeps it from here
-  const path = join(paths.sessionsDir, `${s.sessionId}.json`)
-  const f = file ?? { version: 1 as const, sessionId: s.sessionId, cwd: s.cwd, alive: false, dismissed: [], jobs: [], runs: [] }
-  if (f.bgSince === undefined || (withRemote && f.remoteSince === undefined)) {
-    if (f.bgSince === undefined) f.bgSince = Date.now()
-    if (withRemote && f.remoteSince === undefined) f.remoteSince = Date.now()
-    try { writeFileSync(path, JSON.stringify(f, null, 2), 'utf8') } catch { /* read-only? */ }
-  }
-  notice(`${s.label} · ${s.shortId} woken in the background — ${reason}${note}`)
+  // bgSince / remoteSince / the permission of this first start go to the app's own file (never the plugin's session file)
+  const at = Date.now()
+  const patch: Partial<AppSessionState> = {}
+  if (file?.bgSince === undefined && app.bgSince === undefined) patch.bgSince = at
+  if (withRemote && file?.remoteSince === undefined && app.remoteSince === undefined) patch.remoteSince = at
+  if (flagsTook && app.permissionAtStart === undefined) patch.permissionAtStart = permissionRecord(settings.permission, at)
+  if (Object.keys(patch).length > 0) { try { patchSession(s.sessionId, patch) } catch (err) { log(`APPSTATE write failed ${String(err)}`) } }
   return { ok: true, message: `${s.shortId}: woken${note}` }
 }
 
@@ -115,8 +113,8 @@ export async function stopBackground(s: SessionView): Promise<string> {
   const left = s.jobs.filter(j => !j.isDismissed).length
   const lang = getSettings().language
   return lang === 'ko'
-    ? `${s.label} · ${s.shortId} 을 껐습니다.${left > 0 ? ` 예약이 ${left}개 남아 있어 다음 예약 전에 clock-out 이 다시 켭니다. 다시 켜지 않게 하려면 그 예약을 숨기기 하세요.` : ''}`
-    : `Stopped ${s.label} · ${s.shortId}.${left > 0 ? ` It still has ${left} job(s), so clock-out wakes it before the next one; hide them to keep it off.` : ''}`
+    ? `${s.label} · ${s.shortId} 을 껐습니다.${left > 0 ? ` 예약이 ${left}개 남아 있어 다음 예약 전에 clock-out 이 다시 켭니다. 다시 켜지 않게 하려면 그 예약을 '자동 깨우기 제외' 하세요.` : ''}`
+    : `Stopped ${s.label} · ${s.shortId}.${left > 0 ? ` It still has ${left} job(s), so clock-out wakes it before the next one; use No auto-wake on them to keep it off.` : ''}`
 }
 
 // Opens a Windows Terminal window attached to a running session (the in-app terminal comes later)
@@ -149,41 +147,4 @@ export function openSession(s: SessionView): string {
   openTerminal(['claude', '--resume', s.sessionId], s.cwd)
   log(`RESUME ${s.shortId} in a terminal`)
   return `${s.shortId}: claude --resume in a new terminal`
-}
-
-// The scheduler: every 30 s look at the overview and wake what is due (lead), expiring, or in the daily sweep.
-// afterTick: more work on the same overview (index.ts passes the automatic cleanup, cleanup.ts)
-export function startScheduler(afterTick?: (overview: Overview) => Promise<void>): () => void {
-  const tick = () => {
-    void (async () => {
-      try {
-        const settings = getSettings()
-        const now = Date.now()
-        const today = new Date(now).toDateString()
-        const overview = buildOverview()
-        const sweep = settings.revive.dailyAtEnd && dailyDate !== today && isPastDailyTime(now, settings)
-        if (sweep) dailyDate = today
-        for (const s of overview.sessions) {
-          if (isRemoteSession(s.sessionId)) continue   // remote.ts keeps that one running
-          let reason = reopenReason(s, now, settings, true)
-          if (reason === undefined && sweep && !s.isAlive && s.warnings.length === 0 && s.jobs.some(j => !j.isDismissed)) reason = { kind: 'daily', text: `daily sweep at ${dailySweepHm(settings)}` }
-          if (reason === undefined) continue
-          const last = lastWoken.get(s.sessionId)
-          if (last !== undefined && now - last < REVIVE_GUARD_MS) continue
-          if (settings.revive.confirmBefore) {
-            lastWoken.set(s.sessionId, now)
-            notice(`${s.label} · ${s.shortId}: ${reason.text} — open the schedule panel to revive`, 'warn')
-            continue
-          }
-          await reviveSession(s, reason.text)
-        }
-        await afterTick?.(overview)
-      } catch (err) {
-        log(`SCHEDULER error ${String(err)}`)
-      }
-    })()
-  }
-  const id = setInterval(tick, TICK_MS)
-  setTimeout(tick, 5_000)
-  return () => clearInterval(id)
 }

@@ -1,7 +1,7 @@
 // Pure decisions behind reviving a stopped session. The main process (electron/main/revive.ts) runs the commands.
 import type { SessionView } from './schedule'
 import { parseHm } from './time'
-import type { AppSettings } from './types'
+import type { AppSettings, PermissionRecord } from './types'
 
 // The first message a woken session gets. Fixed text on purpose: nothing from a session file is ever put into
 // the prompt, so a tampered file cannot make the session do anything but check its own jobs.
@@ -24,9 +24,30 @@ export function reviveArgs(sessionId: string, wasBackground: boolean, permission
   return args
 }
 
+// --allowedTools / --disallowedTools take several values (<tools...>): whatever follows them up to the next flag is read as
+// tool names, the first message too (measured 2026-10-20 with -p: `--allowedTools Read "msg"` lost the message). So the
+// two lists come first and the mode flag after them ends the lists.
 export function permissionArgs(permission: AppSettings['permission']): string[] {
-  if (permission.mode === 'bypass') return ['--dangerously-skip-permissions']
-  return ['--permission-mode', 'acceptEdits', ...(permission.allowedTools.length > 0 ? ['--allowedTools', permission.allowedTools.join(',')] : [])]
+  const disallowed = permission.disallowedTools.length > 0 ? ['--disallowedTools', permission.disallowedTools.join(',')] : []
+  if (permission.mode === 'bypass') return [...disallowed, '--dangerously-skip-permissions']
+  const allowed = permission.allowedTools.length > 0 ? ['--allowedTools', permission.allowedTools.join(',')] : []
+  return [...allowed, ...disallowed, '--permission-mode', 'acceptEdits']
+}
+
+export function permissionRecord(permission: AppSettings['permission'], at: number): PermissionRecord {
+  return { mode: permission.mode, allowedTools: [...permission.allowedTools], disallowedTools: [...permission.disallowedTools], at }
+}
+
+// The session still runs with the permission of its first background start: true when the settings now say otherwise
+export function permissionDiffers(atStart: PermissionRecord, now: AppSettings['permission']): boolean {
+  const same = (a: readonly string[], b: readonly string[]) => {
+    const x = [...a].sort()
+    const y = [...b].sort()
+    return x.length === y.length && x.every((v, i) => v === y[i])
+  }
+  if (atStart.mode !== now.mode) return true
+  // bypass ignores the allowed list
+  return (now.mode !== 'bypass' && !same(atStart.allowedTools, now.allowedTools)) || !same(atStart.disallowedTools, now.disallowedTools)
 }
 
 export type ReopenReason = { kind: 'due' | 'expiry' | 'daily'; text: string }

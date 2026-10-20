@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, BookOpen, Power, Trash2, ExternalLink, Smartphone, CalendarClock, Plug, Settings as SettingsIcon, X, CheckCircle2, EyeOff, Eye, FolderOpen, Hourglass, Play, Terminal, XCircle, CheckCheck, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
+import { AlarmClock, AlarmClockOff, AlertTriangle, Ban, BookOpen, Power, Trash2, ExternalLink, Smartphone, CalendarClock, CalendarX, Plug, Settings as SettingsIcon, X, CheckCircle2, CircleDashed, EyeOff, FolderOpen, Hourglass, Loader2, MessageSquare, Play, RefreshCw, Send, Shield, Terminal, XCircle, CheckCheck, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 
@@ -11,12 +11,12 @@ import type { ModeSource } from '@shared/runMode'
 import { formatRemaining } from '@shared/time'
 import { blockedRun, planPings, planZones } from '@shared/timeline'
 import { remoteIsOn } from '@shared/schedule'
-import type { Overview, SessionView } from '@shared/schedule'
+import type { Overview, SessionView, TaskOutcome } from '@shared/schedule'
 import { RUN_MODES } from '@shared/types'
 import type { AppSettings, RunMode } from '@shared/types'
 
 import { api } from './api'
-import { t, warningText } from './i18n'
+import { fill, t, warningText } from './i18n'
 import type { Lang } from './i18n'
 import { blockedText } from './zoneText'
 
@@ -45,12 +45,16 @@ export function fmtAt(ms: number | undefined, now: number): string {
 
 const DONE_SHOWN = 3   // done rows shown before "n more"
 type Done = SessionView['done'][number]
-function doneClass(d: Done): string { return d.reason === undefined ? 'muted' : d.reason === 'answer' ? 'ok-text' : 'danger-text' }
-function doneIcon(d: Done) { return d.reason === undefined || d.reason === 'answer' ? <CheckCircle2 size={12} /> : <XCircle size={12} /> }
+// an answer only means Claude answered, not that the job worked: neutral, never green; failed is red
+function outcomeClass(o: TaskOutcome | undefined): string { return o === 'failed' ? 'danger-text' : 'muted' }
+function outcomeIcon(o: TaskOutcome | undefined) { return o === undefined ? <CircleDashed size={12} /> : o === 'failed' ? <XCircle size={12} /> : <MessageSquare size={12} /> }
+function outcomeText(o: TaskOutcome | undefined, lang: Lang): string { return t(lang, o === undefined ? 'firedNoRun' : o === 'failed' ? 'runFailed' : 'runAnswered') }
+function doneClass(d: Done): string { return outcomeClass(d.taskOutcome) }
+function doneIcon(d: Done) { return outcomeIcon(d.taskOutcome) }
 // a done row's hover text: the whole prompt, then the answer's first line (or that no result was recorded)
 function doneTitle(d: Done, lang: Lang): string {
   const head = [d.jobId !== undefined ? `#${d.jobId}` : '', d.recurring === undefined ? '' : t(lang, d.recurring ? 'recurring' : 'oneShot')].filter(x => x !== '').join(' · ')
-  return [head, d.prompt, d.reason === undefined ? t(lang, 'firedNoRun') : d.answerHead ? `↳ ${d.answerHead}` : ''].filter(x => x !== '').join('\n')
+  return [head, d.prompt, outcomeText(d.taskOutcome, lang), d.answerHead ? `↳ ${d.answerHead}` : '', d.taskOutcome !== undefined ? t(lang, 'outcomeHint') : ''].filter(x => x !== '').join('\n')
 }
 
 // running / stopped, and where it runs: a background session goes on after its window closes or /exit
@@ -206,6 +210,42 @@ function ReopenPopover({ pop, remoteUrl, lang, onClose }: { pop: Pop; remoteUrl?
   )
 }
 
+// What the app knows went wrong with a session: its wakes (app-state.json), instructions it did not get (inbox), its permission
+function SessionAlerts({ s, now, lang }: { s: SessionView; now: number; lang: Lang }) {
+  const w = s.wake
+  const failed = s.inbox?.items.filter(i => i.state === 'failed') ?? []
+  const unknown = s.inbox?.items.filter(i => i.state === 'unknown') ?? []
+  const itemRow = (i: { at: number; head: string; lastError?: string }) => (
+    <div key={`${i.at}-${i.head}`} className="card-head small" title={i.lastError}><span className="mono">{fmtAt(i.at, now)}</span><span className="ellipsis grow">{i.head}</span></div>
+  )
+  return <>
+    {w?.blocked !== undefined && <div className="banner danger small"><Ban size={14} /> <span><b>{t(lang, 'wakeBlocked')}</b> — {w.blocked} · {t(lang, 'wakeBlockedFix')}</span></div>}
+    {w?.blocked === undefined && (w?.failures ?? 0) > 0 && (
+      <div className="banner warn small" title={w?.lastError}><RefreshCw size={14} /> <span>
+        <b>{[fill(t(lang, 'wakeFailed'), { n: w?.failures ?? 0 }), w?.nextRetryAt !== undefined ? fill(t(lang, 'wakeRetryAt'), { at: fmtAt(w.nextRetryAt, now) }) : ''].filter(x => x !== '').join(' · ')}</b>
+        {w?.lastError !== undefined && <span className="muted"> — {w.lastError}</span>}
+      </span></div>
+    )}
+    {(s.inbox?.failed ?? 0) > 0 && (
+      <div className="banner danger small"><Send size={14} /> <div className="grow"><div><b>{fill(t(lang, 'inboxFailed'), { n: s.inbox?.failed ?? 0 })}</b> — {t(lang, 'inboxFailedWhy')}</div>{failed.map(itemRow)}</div></div>
+    )}
+    {(s.inbox?.unknown ?? 0) > 0 && (
+      <div className="banner warn small"><Send size={14} /> <div className="grow"><div><b>{fill(t(lang, 'inboxUnknown'), { n: s.inbox?.unknown ?? 0 })}</b> — {t(lang, 'inboxUnknownWhy')}</div>{unknown.map(itemRow)}</div></div>
+    )}
+    {s.permissionMismatch === true && <div className="banner warn small"><Shield size={14} /> <span>{t(lang, 'permMismatch')}</span></div>}
+  </>
+}
+
+// The permission flags of the session's first background start, in one line; the tool lists on hover
+function PermissionLine({ s, lang }: { s: SessionView; lang: Lang }) {
+  const p = s.permissionAtStart
+  if (p === undefined) return null
+  const isBypass = p.mode === 'bypass'
+  const parts = [isBypass ? 'bypass' : t(lang, 'permWork'), ...(isBypass ? [] : [`${t(lang, 'permAllowed')} ${p.allowedTools.length}`]), `${t(lang, 'permDenied')} ${p.disallowedTools.length}`]
+  const title = [`${t(lang, 'permAtStart')} · ${new Date(p.at).toLocaleString()}`, ...(isBypass ? [] : [`${t(lang, 'permAllowed')}: ${p.allowedTools.join(', ') || '—'}`]), `${t(lang, 'permDenied')}: ${p.disallowedTools.join(', ') || '—'}`].join('\n')
+  return <span className={s.permissionMismatch === true ? 'warn-text' : ''} title={title}><Shield size={12} /> {t(lang, 'permAtStart')}: {parts.join(' · ')}</span>
+}
+
 function SessionRow({ s, selected, now, lang, onSelect, onPop }: { s: SessionView; selected: boolean; now: number; lang: Lang; onSelect: () => void; onPop: (p: Pop) => void }) {
   const live = s.jobs.filter(j => !j.isDismissed).length
   // nothing scheduled any more, kept for what it did in the last 7 days
@@ -217,6 +257,7 @@ function SessionRow({ s, selected, now, lang, onSelect, onPop }: { s: SessionVie
         <span className="session-title">
           <span className="ellipsis">{s.label}</span>
           {s.warnings.length > 0 && <AlertTriangle size={13} color="var(--warn)" />}
+          {(s.wake?.blocked !== undefined || (s.inbox?.failed ?? 0) > 0) && <AlertTriangle size={13} color="var(--danger)" />}
           <span className="grow" />
           <span className="count">{isDoneOnly ? `${t(lang, 'doneShort')} ${s.done.length}` : live}</span>
         </span>
@@ -277,6 +318,7 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
     const text = await api.tidyDone(ids)
     setAsk({ step: 'done', sessionId: '', ok: true, text, canStop: false })
   }
+  const missed = overview.missed ?? []
   const remoteUrlOf = (s: SessionView) => s.remoteUrl ?? (overview.remote?.sessionId === s.sessionId ? overview.remote.url : undefined)
   const sessionRow = (s: SessionView) => <SessionRow key={s.sessionId} s={s} selected={s.sessionId === selected?.sessionId} now={now} lang={lang} onSelect={() => setSelectedId(s.sessionId)} onPop={setPop} />
 
@@ -302,6 +344,24 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
         {doneOnlyOpen && doneOnly.map(sessionRow)}
       </aside>
       <section className="detail">
+        {/* missed jobs of every session (the PC slept or was off): never run again on their own, only from here */}
+        {missed.length > 0 && (
+          <div className="banner warn small">
+            <CalendarX size={15} />
+            <div className="grow">
+              <div><b>{t(lang, 'missedTitle')} {missed.length}</b> — {t(lang, 'missedWhy')}</div>
+              {missed.map(m => { const owner = overview.sessions.find(x => x.sessionId === m.sessionId); return (
+                <div key={m.key} className="card-head small">
+                  <span className="mono">{fmtAt(m.dueAt, now)}</span>
+                  <span role="button" className="id-link" title={m.sessionId} onClick={() => setSelectedId(m.sessionId)}>{owner?.label ?? m.sessionId.slice(0, 8)}</span>
+                  <span className="ellipsis grow muted" title={m.prompt}>{m.prompt.replace(/\s+/g, ' ')}</span>
+                  <button className="btn secondary tiny" title={t(lang, 'missedRunHint')} onClick={() => { onMessage(t(lang, 'reviving')); void api.runMissed(m.sessionId, m.key).then(onMessage) }}><Play size={12} /> {t(lang, 'missedRun')}</button>
+                  <button className="btn ghost tiny" title={t(lang, 'missedCloseHint')} onClick={() => { void api.dismissMissed(m.sessionId, m.key).then(text => onMessage(text.startsWith('closed ') ? t(lang, 'missedClosed') : text)) }}><X size={12} /> {t(lang, 'missedClose')}</button>
+                </div>
+              ) })}
+            </div>
+          </div>
+        )}
         {selected === undefined ? (
           <div className="empty big"><CalendarClock size={40} /><span>{t(lang, 'noJobsAnywhere')}</span></div>
         ) : (
@@ -313,16 +373,18 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
                   <StatePill alive={selected.isAlive} runsIn={selected.runsIn} lang={lang} />
                   {selected.source === 'transcript' && <span className="pill">{t(lang, 'fromTranscript')}</span>}
                   {selected.running !== undefined && <span className="pill warn" title={selected.running.promptHead}>▶ {t(lang, 'runningNow')}</span>}
+                  {selected.wake?.inProgress === true && <span className="pill warn"><Loader2 size={11} className="spin" />&nbsp;{t(lang, 'waking')}</span>}
                 </div>
                 <div className="detail-sub">
                   <IdLink s={selected} text={selected.sessionId} lang={lang} onPop={setPop} />
                   <span className="ellipsis" title={selected.cwd}><FolderOpen size={12} /> {selected.cwd}</span>
                   {selected.name ? <span className="ellipsis" title={selected.name}>{selected.name}</span> : null}
+                  <PermissionLine s={selected} lang={lang} />
                 </div>
               </div>
               <div className="actions">
                 {!selected.isAlive && (
-                  <button className="btn primary" disabled={selected.warnings.length > 0} title={selected.warnings.map(w => warningText(lang, w)).join(', ')} onClick={() => { onMessage(t(lang, 'reviving')); void api.reviveSession(selected.sessionId).then(onMessage) }}>
+                  <button className="btn primary" disabled={selected.warnings.length > 0 || selected.wake?.inProgress === true} title={selected.warnings.map(w => warningText(lang, w)).join(', ')} onClick={() => { onMessage(t(lang, 'reviving')); void api.reviveSession(selected.sessionId).then(onMessage) }}>
                     <Play size={14} /> {t(lang, 'revive')}
                   </button>
                 )}
@@ -341,6 +403,7 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
             {selected.warnings.length > 0 && (
               <div className="banner warn"><AlertTriangle size={15} /> <span><b>{t(lang, 'notTrusted')}</b> — {selected.warnings.map(w => warningText(lang, w)).join(', ')}</span></div>
             )}
+            <SessionAlerts s={selected} now={now} lang={lang} />
             <div className="cards">
               {selected.jobs.map(j => { const blocked = blockedOf(j); const run = effectiveMode(j.mode, selected.sessionId, settings.runMode); return (
                 <article key={j.id} className={`card with-time ${j.isDismissed ? 'dismissed' : ''} ${j.isExpiringSoon && !j.isDismissed ? 'expiring' : ''} ${blocked !== undefined ? 'blocked' : ''}`}>
@@ -353,14 +416,14 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
                   <div className="card-head">
                     <span className="card-sched">{schedText(j)}</span>
                     <span className="pill">{j.recurring ? t(lang, 'recurring') : t(lang, 'oneShot')}</span>
-                    {j.isDismissed && <span className="pill off">{t(lang, 'hidden')}</span>}
+                    {j.isDismissed && <span className="pill off" title={t(lang, 'hideHint')}>{t(lang, 'hidden')}</span>}
                     {selected.source === 'plugin' && <span className="pill" title={modeHint(lang, run.mode)}>{modeText(lang, run.mode)} · {sourceText(lang, run.source)}</span>}
                     <span className="grow" />
-                    {schedText(j) !== j.cron && <span className="mono muted small" title="cron">{j.cron}</span>}
+                    {schedText(j) !== j.cron && <span className="mono muted small ellipsis" title={`cron ${j.cron}`}>{j.cron}</span>}
                     <button className="btn ghost tiny danger-text" title={t(lang, 'deleteAsk')} onClick={() => setAsk({ step: 'confirm', sessionId: selected.sessionId, job: j })}><Trash2 size={12} /> {t(lang, 'deleteJob')}</button>
                     {!selected.isAlive && (
-                      <button className="btn ghost tiny" onClick={() => { void api.hideJob(j.id).then(onMessage) }} title={j.isDismissed ? t(lang, 'unhideHint') : t(lang, 'hideHint')}>
-                        {j.isDismissed ? <><Eye size={12} /> {t(lang, 'unhide')}</> : <><EyeOff size={12} /> {t(lang, 'hide')}</>}
+                      <button className="btn ghost tiny" onClick={() => { const was = j.isDismissed; void api.hideJob(j.id).then(text => onMessage(/^(Hidden|Unhidden) /.test(text) ? t(lang, was ? 'unhideDone' : 'hideDone') : text)) }} title={j.isDismissed ? t(lang, 'unhideHint') : t(lang, 'hideHint')}>
+                        {j.isDismissed ? <><AlarmClock size={12} /> {t(lang, 'unhide')}</> : <><AlarmClockOff size={12} /> {t(lang, 'hide')}</>}
                       </button>
                     )}
                   </div>
@@ -368,8 +431,8 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
                   <div className="card-meta">
                     {j.expiresInDays !== undefined && <span className={`meta ${j.isExpiringSoon ? 'warn-text' : 'muted'}`}><Hourglass size={12} /> {t(lang, 'expires')} {j.expiresInDays}{t(lang, 'days')}</span>}
                     {j.lastRun !== undefined && (
-                      <span className={`meta ${j.lastRun.reason === 'answer' ? 'ok-text' : 'danger-text'}`}>
-                        {j.lastRun.reason === 'answer' ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {t(lang, 'lastRun')} {fmtAt(j.lastRun.finishedAt, now)} · {Math.round(j.lastRun.durationMs / 1000)}s
+                      <span className={`meta ${outcomeClass(j.lastRun.taskOutcome)}`} title={t(lang, 'outcomeHint')}>
+                        {outcomeIcon(j.lastRun.taskOutcome)} {t(lang, 'lastRun')} {fmtAt(j.lastRun.finishedAt, now)} · {Math.round(j.lastRun.durationMs / 1000)}s · {outcomeText(j.lastRun.taskOutcome, lang)}
                       </span>
                     )}
                     <span className="grow" />
@@ -390,7 +453,7 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
               return (
                 <div className="cards">
                   <div className="card-head">
-                    <button className="btn ghost tiny" aria-expanded={open} onClick={() => setDoneOpen(m => ({ ...m, [selected.sessionId]: !open }))}>
+                    <button className="btn ghost tiny" aria-expanded={open} title={t(lang, 'outcomeHint')} onClick={() => setDoneOpen(m => ({ ...m, [selected.sessionId]: !open }))}>
                       {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />} <CheckCheck size={13} /> {t(lang, 'doneTitle')} <span className="muted">{selected.done.length}</span>
                     </button>
                     {!open && last !== undefined && <span className={`meta small ${doneClass(last)}`}>{t(lang, 'doneLast')} {fmtAt(last.at, now)} {doneIcon(last)}</span>}
@@ -398,13 +461,14 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
                     <ClearButton s={selected} isRemote={isRemote} lang={lang} onAsk={(how, warns, why) => setAsk({ step: 'clear', s: selected, how, warns, why })} />
                     <button className="btn secondary small" title={t(lang, 'openSessionHint')} onClick={() => { void api.openSession(selected.sessionId).then(onMessage) }}><Terminal size={13} /> {t(lang, 'openSession')}</button>
                   </div>
-                  {open && <p className="muted small">{t(lang, 'doneFade')}</p>}
+                  {open && <p className="muted small">{t(lang, 'outcomeHint')}<br />{t(lang, 'doneFade')}</p>}
                   {open && (
                     <div className="card">
                       {rows.map(d => (
                         <div key={`${d.at}-${d.jobId ?? ''}`} className="card-head small" title={doneTitle(d, lang)}>
                           <span className={`meta mono ${doneClass(d)}`}>{doneIcon(d)} {fmtAt(d.at, now)}</span>
                           <span className="mono muted">{d.durationMs !== undefined ? `${Math.round(d.durationMs / 1000)}s` : '—'}</span>
+                          <span className={doneClass(d)}>{outcomeText(d.taskOutcome, lang)}</span>
                           <span className="ellipsis grow muted">{d.prompt.replace(/\s+/g, ' ')}</span>
                         </div>
                       ))}

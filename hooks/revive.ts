@@ -1,10 +1,11 @@
 import type { EngineInterface } from 'claude-code'
 
+import { backgroundOf } from './appState'
 import { buildOverview } from './overview'
 import { clockOutPaths, sessionFilePath } from './paths'
 import { emptySessionFile, liveJobs } from './schema'
 import type { SessionFile } from './schema'
-import { readSessionFile, touchStamp, updateSessionFile } from './sessionFile'
+import { readSessionFile, touchStamp } from './sessionFile'
 
 // Wakes a stopped session in the background: `claude --bg --resume <id> "<first message>"`. The resumed session
 // restores its jobs from the transcript; the first message asks it to check them and renew what is about to expire.
@@ -49,7 +50,8 @@ export async function reviveSession($: EngineInterface, sessionId: string): Prom
   const path = sessionFilePath(paths, sessionId)
   const file = (await readSessionFile($, path)) ?? emptySessionFile(sessionId, view?.cwd ?? '')
   const short = sessionId.slice(0, 8)
-  const wasBg = file.bgSince !== undefined || (await wasBackgroundBefore($, sessionId))
+  // ran in the background before: woken by clock-out (bgSince), recorded by its own plugin at start (kind), or listed by claude agents
+  const wasBg = (await backgroundOf($, sessionId, file)).bgSince !== undefined || file.kind === 'background' || (await wasBackgroundBefore($, sessionId))
 
   const argv = ['claude', '--bg', '--resume', sessionId]
   if (!wasBg) argv.push('--dangerously-skip-permissions')   // saved by the first background start; never repeated
@@ -75,10 +77,8 @@ export async function reviveSession($: EngineInterface, sessionId: string): Prom
     }
   }
 
-  const now = await $.clock.now()
-  await updateSessionFile($, path, () => file, f => {
-    if (f.bgSince === undefined) f.bgSince = now
-  })
+  // bgSince is not written here: the woken session records it in its own file at start (heartbeat.ts), and another
+  // session's file is never written while it may be running (its own writes would be lost)
   await touchStamp($)
   return `${short}: woken in the background${copyNote}. It checks its jobs now; attach with: claude attach ${short}`
 }

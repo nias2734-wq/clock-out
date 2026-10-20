@@ -58,7 +58,7 @@ test('/clock-out lists sessions by next run with state, real next time, expiry a
   expect(lines[0]).toBe('proj · bbbb0000  stopped  1 job(s)  next 19:40')
   expect(lines[1]).toContain('[once0001] 40 19 19 10 * · next 19:40 | evening task')
   expect(lines[2]).toBe('tools · aaaa0000  running  1 job(s)  next 21:33')
-  expect(lines[3]).toContain('[d0ae027c] Every day at 9:03 PM · next 21:33 · expires in 1d · last ok')
+  expect(lines[3]).toContain('[d0ae027c] Every day at 9:03 PM · next 21:33 · expires in 1d · last answered (unverified)')
   expect(text).not.toContain('gone0001')
   expect(text).not.toContain('here ·')
   expect(text).toContain('(pane not drawn: no surface in test)')
@@ -83,4 +83,40 @@ test('/clock-out hide toggles dismissed on a stopped session and refuses a runni
 
   const missing = await runCommand($, 'clock-out', 'hide nope')
   expect(missing.text).toBe('No job nope in any session.')
+})
+
+test('the app-state hidden overrides the session file dismissed: true hides, false shows again, no key keeps dismissed', async ($, on) => {
+  const files = fixture(on)
+  session(on)
+  await mock.clock(on).set(NOW)
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'no surface in test' } }))
+  const running = `${ROOT}/aaaa0000-0000-4000-8000-000000000001.json`
+  files.set(running, JSON.stringify({ ...JSON.parse(files.get(running) ?? '{}'), dismissed: ['d0ae027c'] }))
+  files.set('/home/alice/.claude/clock-out/app-state.json', JSON.stringify({ version: 1, sessions: {
+    'aaaa0000-0000-4000-8000-000000000001': { hidden: { d0ae027c: false } },
+    'bbbb0000-0000-4000-8000-000000000002': { hidden: { once0001: true } },
+  } }))
+
+  const text = (await runCommand($, 'clock-out')).text ?? ''
+  expect(text).toContain('proj · bbbb0000  stopped  1 job(s)  next —')   // its only job is hidden: no next run
+  expect(text).toMatch(/\[once0001\][^\n]*· hidden/)
+  expect(text).not.toMatch(/\[d0ae027c\][^\n]*· hidden/)
+
+  // without the app's key the file's dismissed still counts
+  files.set('/home/alice/.claude/clock-out/app-state.json', JSON.stringify({ version: 1, sessions: {} }))
+  expect((await runCommand($, 'clock-out')).text ?? '').toMatch(/\[d0ae027c\][^\n]*· hidden/)
+})
+
+test('/clock-out hide leaves a job the app hid or showed to the app and does not touch the session file', async ($, on) => {
+  const files = fixture(on)
+  session(on)
+  await mock.clock(on).set(NOW)
+  const stopped = `${ROOT}/bbbb0000-0000-4000-8000-000000000002.json`
+  files.set('/home/alice/.claude/clock-out/app-state.json', JSON.stringify({ version: 1, sessions: { 'bbbb0000-0000-4000-8000-000000000002': { hidden: { once0001: true } } } }))
+  const before = files.get(stopped)
+
+  const ran = await runCommand($, 'clock-out', 'hide once0001')
+
+  expect(ran.text).toContain('once0001 was hidden in the clock-out app')
+  expect(files.get(stopped)).toBe(before)
 })

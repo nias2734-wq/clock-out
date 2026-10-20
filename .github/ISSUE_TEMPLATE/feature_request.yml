@@ -1,0 +1,30 @@
+name: Feature request / 기능 제안
+description: Suggest an idea or a change / 아이디어나 변경 제안
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do? / 무엇을 하려고 하나요?
+      description: The situation and what is hard today, e.g. which jobs you run overnight and what you check in the morning. / 상황과 지금 어려운 점. 예를 들어 밤에 어떤 작업을 돌리고 아침에 무엇을 확인하는지.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help / 바라는 동작
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do now instead / 지금은 어떻게 하고 있나요
+      description: Workarounds, or Claude Code's own features you tried. / 우회 방법이나 써 본 Claude Code 자체 기능.
+
+  - type: input
+    id: versions
+    attributes:
+      label: Claude Code and clock-out versions / Claude Code·clock-out 버전
+      placeholder: Claude Code 2.1.304, clock-out 0.12.0

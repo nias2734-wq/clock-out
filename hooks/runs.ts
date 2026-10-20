@@ -1,7 +1,7 @@
 import type { EngineInterface, On } from 'claude-code'
 
-import { jobOfPrompt, RUNS_KEPT } from './schema'
-import type { Run, SessionFile } from './schema'
+import { matchJob, RUNS_KEPT, taskOutcomeOf } from './schema'
+import type { JobMatch, Run, SessionFile } from './schema'
 import { touchStamp, updateOwnSession } from './sessionFile'
 import { noteOrder, noticeOfRun, REPLY_MARK, sendToRemote, takeOrder } from './remote'
 import { labelOf } from './overview'
@@ -11,7 +11,7 @@ import { labelOf } from './overview'
 // While it runs, the file says so (running), so the remote jobs session can warn before reopening this session.
 // An instruction from the remote jobs session (ORDER_MARK) is answered back to it when its turn ends.
 
-export type Pending = { prompt: string; firedAt: number }
+export type Pending = { prompt: string; firedAt: number; match?: JobMatch }   // match: decided when it fired (nextFireAt moves on later)
 export type Outcome = { reason: string; durationMs: number; answer: string }
 
 const CRONLIST_RESYNC_DELAY_MS = 1_500   // a fired one-shot has left CronList by then
@@ -22,13 +22,16 @@ function head(text: string, n: number): string {
 
 // Pure: records the run on the file and marks a fired one-shot. Returns the run.
 export function applyRun(file: SessionFile, pending: Pending, outcome: Outcome, finishedAt: number): Run {
-  const job = jobOfPrompt(file, pending.prompt)
+  const match = pending.match ?? matchJob(file, pending.prompt, pending.firedAt)
+  const job = match.job === undefined ? undefined : file.jobs.find(j => j.id === match.job?.id)
   const run: Run = {
     jobId: job?.id,
+    ...(match.ambiguous === true ? { ambiguous: true as const } : {}),
     promptHead: head(pending.prompt, 120),
     firedAt: pending.firedAt,
     finishedAt,
     reason: outcome.reason,
+    taskOutcome: taskOutcomeOf(outcome.reason),
     durationMs: outcome.durationMs,
     answerHead: head(outcome.answer, 200),
   }
@@ -37,10 +40,12 @@ export function applyRun(file: SessionFile, pending: Pending, outcome: Outcome, 
   return run
 }
 
-// Pure: marks the file as running the fired prompt, with the job it belongs to when the prompt matches one
-export function applyRunning(file: SessionFile, pending: Pending): void {
-  const jobId = jobOfPrompt(file, pending.prompt)?.id
-  file.running = { promptHead: head(pending.prompt, 120), firedAt: pending.firedAt, ...(jobId !== undefined ? { jobId } : {}) }
+// Pure: marks the file as running the fired prompt, with the job it belongs to when the prompt matches one. Returns the match.
+export function applyRunning(file: SessionFile, pending: Pending): JobMatch {
+  const match = matchJob(file, pending.prompt, pending.firedAt)
+  const jobId = match.job?.id
+  file.running = { promptHead: head(pending.prompt, 120), firedAt: pending.firedAt, ...(jobId !== undefined ? { jobId } : {}), ...(match.ambiguous === true ? { ambiguous: true as const } : {}) }
+  return match
 }
 
 async function resyncCronList($: EngineInterface): Promise<void> {
@@ -58,7 +63,7 @@ export function registerRuns(on: On): void {
     if (e.origin.kind === 'scheduled-trigger') {
       const fired: Pending = { prompt: e.text, firedAt: await $.clock.now() }
       pending = fired
-      await updateOwnSession($, file => applyRunning(file, fired)).catch(() => undefined)
+      await updateOwnSession($, file => { fired.match = applyRunning(file, fired) }).catch(() => undefined)
       await touchStamp($).catch(() => undefined)
     } else {
       noteOrder(e.text)   // typed or pasted with the mark; the inbox marks its own submissions

@@ -2,7 +2,8 @@
 // (<config>/clock-out/sessions/<id>.json) or, for sessions that never loaded the plugin, from Claude Code's
 // transcripts. Pure functions only; reading files is the main process's job (electron/main/schedule.ts).
 import { cronNext } from './cron'
-import type { RunMode } from './types'
+import type { MissedJob } from './missed'
+import type { PermissionRecord, RunMode } from './types'
 
 export const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 export const DAY_MS = 24 * 60 * 60 * 1000
@@ -26,8 +27,27 @@ export type SessionFile = {
   running?: { promptHead: string; firedAt: number; jobId?: string }   // a scheduled job runs now; jobId when the plugin matched its prompt to a job
   dismissed: string[]
   jobs: { id: string; cron: string; prompt: string; recurring: boolean; humanSchedule?: string; createdAt: number; expiresAt?: number; nextFireAt?: number; deletedAt?: number; firedAt?: number; goneAt?: number; mode?: RunMode }[]
-  runs: { jobId?: string; promptHead?: string; firedAt: number; finishedAt: number; reason: string; durationMs: number; answerHead: string }[]
+  runs: { jobId?: string; promptHead?: string; firedAt: number; finishedAt: number; reason: string; taskOutcome?: TaskOutcome; durationMs: number; answerHead: string }[]
 }
+
+// A run's result as far as clock-out knows (hooks/schema.ts): answer → unverified (Claude answered; whether the job worked is
+// not checked), any other reason → failed. Absent on runs recorded before 0.13: taskOutcomeOf(reason) gives the same.
+export type TaskOutcome = 'unverified' | 'failed'
+export const taskOutcomeOf = (reason: string): TaskOutcome => (reason === 'answer' ? 'unverified' : 'failed')
+
+// The app's wake attempts of a session (app-state.json, electron/main/wake.ts)
+export type WakeView = {
+  lastAttemptAt?: number
+  lastSuccessAt?: number
+  nextRetryAt?: number                 // the scheduler tries again from then (all quick retries failed)
+  failures?: number                    // failed attempts since the last success
+  blocked?: string                     // a login / permission failure: no automatic wake until a manual one succeeds
+  lastError?: string                   // the last failure's output, first 160 chars
+  inProgress?: boolean                 // a wake (with its retries) runs now
+}
+
+// Instructions in a session's inbox the plugin could not submit (failed after 5 tries) or may have submitted (unknown)
+export type InboxView = { failed: number; unknown: number; items: { state: 'failed' | 'unknown'; at: number; head: string; lastError?: string }[] }
 
 export type JobView = {
   id: string
@@ -41,7 +61,7 @@ export type JobView = {
   isExpiringSoon: boolean
   isDismissed: boolean
   mode?: RunMode                       // set on the job by the plugin's job_mode tool; absent = session or default setting
-  lastRun?: { finishedAt: number; reason: string; durationMs: number; answerHead: string }
+  lastRun?: { finishedAt: number; reason: string; taskOutcome: TaskOutcome; durationMs: number; answerHead: string }
 }
 
 export type SessionView = {
@@ -63,6 +83,10 @@ export type SessionView = {
   jobs: JobView[]
   done: DoneView[]                     // finished in the last 7 days, newest first (doneOf)
   warnings: string[]                   // validation problems; a session with warnings is never revived
+  wake?: WakeView                      // absent when the app never tried to wake it
+  permissionAtStart?: PermissionRecord // the permission flags of its first background start by the app
+  permissionMismatch?: boolean         // permissionAtStart differs from the settings now (the session keeps the old one)
+  inbox?: InboxView                    // absent when nothing failed
 }
 
 // A finished run, or a fired one-shot without a recorded run, for the panel's done list
@@ -73,12 +97,13 @@ export type DoneView = {
   recurring?: boolean                  // absent when the job is no longer in the file
   finishedAt?: number
   reason?: string                      // answer | aborted | refusal | error; absent for a one-shot fired without a run record
+  taskOutcome?: TaskOutcome            // set with reason
   durationMs?: number
   answerHead?: string
 }
 
 export type RemoteView = { enabled: boolean; isAlive: boolean; sessionId?: string; url?: string; error?: string }   // the remote jobs session
-export type Overview = { builtAt: number; sessions: SessionView[]; jobCount: number; nextSession?: { shortId: string; label: string; nextAt: number }; remote?: RemoteView }
+export type Overview = { builtAt: number; sessions: SessionView[]; jobCount: number; nextSession?: { shortId: string; label: string; nextAt: number }; remote?: RemoteView; missed?: MissedJob[] }   // missed: shared/missed.ts, oldest first
 
 // The monitor button and menu treat the remote jobs session as on (open it or turn it off) only when the setting is on
 // and it runs; on but not running yet (starting, failed) the button just starts / opens it as before
@@ -106,6 +131,13 @@ export function validateSessionFile(file: SessionFile, fileMtimeMs: number, now:
   return warnings
 }
 
+// Hidden job ids: the session file's dismissed (written by the app before 0.13) with the app's hidden (app-state.json) over it
+export function dismissedWith(fileDismissed: readonly string[], hidden: Record<string, boolean> | undefined): string[] {
+  const ids = new Set(fileDismissed)
+  for (const [id, isHidden] of Object.entries(hidden ?? {})) { if (isHidden) ids.add(id); else ids.delete(id) }
+  return [...ids]
+}
+
 // clearedAt: when the person cleaned this session's done list off the panel (settings doneCleared)
 export function sessionViewOf(file: SessionFile, now: number, isAlive: boolean, source: SessionView['source'], warnings: string[] = [], clearedAt?: number): SessionView {
   const jobs: JobView[] = []
@@ -121,7 +153,7 @@ export function sessionViewOf(file: SessionFile, now: number, isAlive: boolean, 
       view.expiresInDays = Math.max(0, Math.ceil((j.expiresAt - now) / DAY_MS))
       view.isExpiringSoon = j.expiresAt - now <= EXPIRING_SOON_DAYS * DAY_MS
     }
-    if (run !== undefined) view.lastRun = { finishedAt: run.finishedAt, reason: run.reason, durationMs: run.durationMs, answerHead: run.answerHead }
+    if (run !== undefined) view.lastRun = { finishedAt: run.finishedAt, reason: run.reason, taskOutcome: run.taskOutcome ?? taskOutcomeOf(run.reason), durationMs: run.durationMs, answerHead: run.answerHead }
     jobs.push(view)
   }
   jobs.sort((a, b) => (a.nextAt ?? Infinity) - (b.nextAt ?? Infinity))
@@ -138,7 +170,7 @@ export function doneOf(file: SessionFile, now: number, clearedAt?: number): Done
   for (const r of file.runs) {
     if (r.finishedAt < since) continue
     const job = jobOf(r.jobId)
-    done.push({ at: r.firedAt, jobId: r.jobId, prompt: job?.prompt ?? r.promptHead ?? '', recurring: job?.recurring, finishedAt: r.finishedAt, reason: r.reason, durationMs: r.durationMs, answerHead: r.answerHead })
+    done.push({ at: r.firedAt, jobId: r.jobId, prompt: job?.prompt ?? r.promptHead ?? '', recurring: job?.recurring, finishedAt: r.finishedAt, reason: r.reason, taskOutcome: r.taskOutcome ?? taskOutcomeOf(r.reason), durationMs: r.durationMs, answerHead: r.answerHead })
   }
   for (const j of file.jobs) {
     if (j.recurring || j.firedAt === undefined || j.firedAt < since || done.some(d => d.jobId === j.id)) continue

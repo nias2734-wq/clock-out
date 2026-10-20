@@ -94,3 +94,106 @@ test('a refused CronCreate falls back to a prompt for the model', async ($, on) 
   expect(submitted[0]).toContain('cron "3 21 * * *"')
   expect(submitted[0]).toContain('nightly sync')
 })
+
+// ── 0.13: the renewal is recorded before CronDelete and recovered after a stop (F-03) ──
+
+const MIN = 60_000
+const renewalFile = (renewal: Record<string, unknown>, oldJob: Record<string, unknown>) =>
+  JSON.stringify({ ...JSON.parse(fileText([{ id: 'old00009', cron: '3 21 * * *', prompt: 'nightly sync', recurring: true, createdAt: NOW - 7 * DAY, expiresAt: NOW, reregisterTriedAt: NOW - HOUR, mode: 'notify', ...oldJob }])), renewal })
+const RENEWAL = { oldId: 'old00009', cron: '3 21 * * *', prompt: 'nightly sync', recurring: true, mode: 'notify', startedAt: NOW - HOUR }
+
+// Starts the session at NOW and lets the CronList check 3 s later run
+async function startSession($: { session: { start: (e: never) => Promise<unknown> } }, on: On) {
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  const clock = mock.clock(on)
+  await clock.set(NOW)
+  await $.session.start({ cwd: '/home/alice/proj' } as never)
+  await clock.set(NOW + 3_000)
+  return clock
+}
+
+test('the renewal is on file (intent) before CronDelete, old_removed with the delete, and gone once the new job exists', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set(FILE, fileText([{ id: 'old00001', cron: '3 21 * * *', prompt: 'nightly sync', recurring: true, createdAt: NOW - 6 * DAY - HOUR, expiresAt: NOW + 23 * HOUR }]))
+  session(on, files)
+  await mock.clock(on).set(NOW)
+  const seen: string[] = []
+  on('tool.call', { tool: 'CronDelete' }, (_$, e) => { seen.push(`delete with ${JSON.parse(files.get(FILE) ?? '{}').renewal?.phase}`); return { result: { id: e.id } } })
+  on('tool.call', { tool: 'CronCreate' }, () => { seen.push(`create with ${JSON.parse(files.get(FILE) ?? '{}').renewal?.phase}`); return { result: { id: 'new00001', humanSchedule: 'x', recurring: true } } })
+  await runCommand($, 'clock-out', 'reregister')
+  expect(seen).toEqual(['delete with intent', 'create with old_removed'])
+  expect(JSON.parse(files.get(FILE) ?? '{}').renewal).toBeUndefined()
+})
+
+test('stopped right after the renewal deleted the old job: the next start finds it missing in CronList and re-creates it', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set(FILE, renewalFile({ ...RENEWAL, phase: 'old_removed' }, { deletedAt: NOW - HOUR }))
+  session(on, files)
+  const created: string[] = []
+  on('tool.call', { tool: 'CronList' }, () => ({ result: { jobs: [] } }))
+  on('tool.call', { tool: 'CronCreate' }, (_$, e) => { created.push(`${e.cron} ${e.prompt} ${String(e.recurring)}`); return { result: { id: 'new00009', humanSchedule: 'x', recurring: true, nextFireAt: NOW + HOUR } } })
+  await startSession($ as never, on)
+  expect(created).toEqual(['3 21 * * * nightly sync true'])
+  const file = JSON.parse(files.get(FILE) ?? '{}')
+  expect(file.renewal).toBeUndefined()
+  expect(file.jobs.find((j: { id: string }) => j.id === 'new00009')?.mode).toBe('notify')   // the old job's run mode carries over
+})
+
+test('a job the user deleted while the renewal was only intended is not restored', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set(FILE, renewalFile({ ...RENEWAL, phase: 'intent' }, { deletedAt: NOW - 30 * MIN }))
+  session(on, files)
+  const created: string[] = []
+  on('tool.call', { tool: 'CronList' }, () => ({ result: { jobs: [] } }))
+  on('tool.call', { tool: 'CronCreate' }, () => { created.push('create'); return { result: { id: 'x', humanSchedule: 'x', recurring: true } } })
+  await startSession($ as never, on)
+  expect(created).toEqual([])
+  expect(JSON.parse(files.get(FILE) ?? '{}').renewal).toBeUndefined()
+})
+
+test('an intended renewal whose old job is still scheduled is dropped and starts over at the next check', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set(FILE, renewalFile({ ...RENEWAL, phase: 'intent' }, {}))
+  session(on, files)
+  const created: string[] = []
+  on('tool.call', { tool: 'CronList' }, () => ({ result: { jobs: [{ id: 'old00009', cron: '3 21 * * *', humanSchedule: 'x', prompt: 'nightly sync', recurring: true }] } }))
+  on('tool.call', { tool: 'CronCreate' }, () => { created.push('create'); return { result: { id: 'x', humanSchedule: 'x', recurring: true } } })
+  await startSession($ as never, on)
+  const file = JSON.parse(files.get(FILE) ?? '{}')
+  expect(created).toEqual([])
+  expect(file.renewal).toBeUndefined()
+  expect(file.jobs[0].reregisterTriedAt).toBeUndefined()
+})
+
+test('restoring refused: the renewal stays blocked with lastError, and a heartbeat 10 min later tries again', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set(FILE, renewalFile({ ...RENEWAL, phase: 'old_removed' }, { deletedAt: NOW - HOUR }))
+  session(on, files)
+  let refuse = true
+  let creates = 0
+  on('tool.call', { tool: 'CronList' }, () => ({ result: { jobs: [] } }))
+  on('tool.call', { tool: 'CronCreate' }, () => {
+    creates++
+    return refuse ? { deny: 'permission mode asks' } : { result: { id: 'new00009', humanSchedule: 'x', recurring: true } }
+  })
+  const clock = await startSession($ as never, on)
+  expect(JSON.parse(files.get(FILE) ?? '{}').renewal).toMatchObject({ phase: 'blocked', lastError: 'permission mode asks', triedAt: NOW + 3_000 })
+  await clock.set(NOW + 5 * MIN)
+  expect(creates).toBe(1)   // not before 10 min
+  refuse = false
+  await clock.set(NOW + 11 * MIN)
+  expect(creates).toBe(2)
+  expect(JSON.parse(files.get(FILE) ?? '{}').renewal).toBeUndefined()
+})
+
+test('while a renewal is blocked, /clock-out reregister deletes no other job', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set(FILE, JSON.stringify({ ...JSON.parse(fileText([{ id: 'soon0002', cron: '0 8 * * *', prompt: 'other', recurring: true, createdAt: 1, expiresAt: NOW + HOUR }])), renewal: { ...RENEWAL, phase: 'blocked', triedAt: NOW - MIN, lastError: 'permission mode asks' } }))
+  session(on, files)
+  await mock.clock(on).set(NOW)
+  const deleted: string[] = []
+  on('tool.call', { tool: 'CronDelete' }, (_$, e) => { deleted.push(e.id); return { result: { id: e.id } } })
+  const ran = await runCommand($, 'clock-out', 'reregister')
+  expect(deleted).toEqual([])
+  expect(ran.text).toContain('old00009: renewal blocked (permission mode asks)')
+})

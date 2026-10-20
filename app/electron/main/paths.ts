@@ -12,6 +12,7 @@ export const paths = {
   root: join(claudeConfigDir(), 'clock-out'),
   sessionsDir: join(claudeConfigDir(), 'clock-out', 'sessions'),
   appSettings: join(claudeConfigDir(), 'clock-out', 'app-settings.json'),
+  appState: join(claudeConfigDir(), 'clock-out', 'app-state.json'),       // the app's own per-session state (appState.ts); the plugin only reads it
   serviceConfig: join(claudeConfigDir(), 'clock-out', 'config.json'),
   log: join(claudeConfigDir(), 'clock-out', 'app.log'),
   remoteDir: join(claudeConfigDir(), 'clock-out', 'remote'),             // the remote jobs session's working folder

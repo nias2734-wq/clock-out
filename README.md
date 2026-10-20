@@ -67,6 +67,16 @@ Enter your work hours in Settings so the usage resets line up with your day.
 - **Claude Code CLI, installed and signed in** — the native install (`claude.exe`, e.g. `~\.local\bin\claude.exe`). A claude installed with npm (`claude.cmd`) may not be found by the app (unverified).
 - **For the remote features**, a Claude subscription that can use Remote Control on claude.ai.
 
+### Supported Claude Code versions
+
+| Claude Code | Checked by | What was checked |
+| --- | --- | --- |
+| 2.1.304 | developer, 2026-10-20 | `claude plugin validate .` passes, `claude plugin test .` 40 pass, plugin API types + `tsc -p .` pass on a fresh clone |
+| 2.1.304 | external review, 2026-10-20 (commit `1ec1b94`) | `claude plugin validate .` passes, `claude plugin test .` 40 pass, app tests 64 pass |
+| 2.1.303 | developer | the plugin loaded from this repository in the developer's own sessions |
+
+These are tests and load checks, not a measured success rate of unattended overnight runs. Other versions are not verified: the plugin API of Claude Code is marked early access and may change between releases. If something breaks, put your `claude --version` in the bug report.
+
 ## Install
 
 Pick **one** of the two ways. Mixing them makes the install fail (see [Do not mix the two ways](#do-not-mix-the-two-ways)).
@@ -318,10 +328,17 @@ Repository root (the plugin):
 
 ```
 npm ci                      # TypeScript for type checks
+npm run types               # plugin API types → .claude-plugin/types/ (once per clone, again after a Claude Code update)
+npx tsc -p .                # type check
 claude plugin validate .    # manifest, hooks, marketplace
 claude plugin test .        # tests/*.test.ts
+npm run check               # all of the above in a row, plus the version check
 claude --plugin-dir .       # run a session with the plugin from this folder
 ```
+
+**Type preparation.** The types `tsc -p .` checks against (`claude-code`, `claude-code/testing`) are written by Claude Code itself into `.claude-plugin/types/` whenever it loads a plugin from a folder, and that folder is git-ignored. On a fresh clone `tsc -p .` therefore fails with *Cannot find module 'claude-code'* until `npm run types` has run. `scripts/types.js` starts `claude --plugin-dir . -p` once with an empty, signed-out config folder: no login is needed, nothing in your real `~/.claude` is touched, and no prompt goes to the model.
+
+CI (`.github/workflows/ci.yml`) runs these steps and the `app/` steps below on `windows-latest`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and [SECURITY.md](SECURITY.md) for reporting a security problem.
 
 `app/` (the desktop app):
 
@@ -415,6 +432,16 @@ Claude Code 에서 세션이 꺼져도 도는 예약은 이미 있습니다. 그
 - **Windows 10 · 11**
 - **Claude Code CLI 설치와 로그인** — 네이티브 설치(`claude.exe`, 예: `~\.local\bin\claude.exe`) 기준입니다. npm 으로 설치한 claude(`claude.cmd`)는 앱이 찾지 못할 수 있습니다(미검증).
 - **원격 기능을 쓰려면** Claude 구독 계정(claude.ai 의 원격 제어를 쓸 수 있는 계정)이 필요합니다.
+
+#### 지원·검증한 Claude Code 버전
+
+| Claude Code | 확인한 사람 | 확인한 것 |
+| --- | --- | --- |
+| 2.1.304 | 개발자, 2026-10-20 | `claude plugin validate .` 통과, `claude plugin test .` 40개 통과, 새 clone 에서 플러그인 API 타입 생성 + `tsc -p .` 통과 |
+| 2.1.304 | 외부 평가, 2026-10-20 (커밋 `1ec1b94`) | `claude plugin validate .` 통과, `claude plugin test .` 40개 통과, 앱 테스트 64개 통과 |
+| 2.1.303 | 개발자 | 개발자 본인 세션에서 이 저장소의 플러그인을 불러와 사용 |
+
+위 확인은 테스트와 불러오기 점검이며, 무인 야간 실행의 성공률을 잰 것이 아닙니다. 다른 버전은 검증하지 않았습니다. Claude Code 의 플러그인 API 는 early access(릴리스마다 바뀔 수 있음)로 표시되어 있습니다. 문제가 생기면 버그 신고에 `claude --version` 결과를 적어 주세요.
 
 ### 설치
 
@@ -644,6 +671,9 @@ claude plugin marketplace remove clock-out
 ### 개발
 
 저장소 구조, 빌드와 테스트 명령은 위 영어 [Development](#development) 절과 같습니다. 한국어로 짚어 둘 것만 적습니다.
+
+- **타입 준비** — 루트의 `tsc -p .` 가 쓰는 타입(`claude-code`, `claude-code/testing`)은 Claude Code 가 폴더에서 플러그인을 불러올 때 `.claude-plugin/types/` 에 직접 쓰는 파일이고, 이 폴더는 git 에 올리지 않습니다. 그래서 새로 clone 한 곳에서는 `npm run types` 를 먼저 돌리기 전까지 `tsc -p .` 가 *Cannot find module 'claude-code'* 로 실패합니다. Claude Code 를 업데이트한 뒤에도 다시 돌리세요. `scripts/types.js` 는 비어 있고 로그인하지 않은 설정 폴더로 `claude --plugin-dir . -p` 를 한 번 실행합니다. 로그인이 필요 없고, 실제 `~/.claude` 를 건드리지 않으며, 모델에 프롬프트를 보내지 않습니다. `npm run check` 는 타입 생성 → `tsc -p .` → `claude plugin validate .` → `claude plugin test .` → 버전 점검을 한 번에 돌립니다.
+- **CI** — `.github/workflows/ci.yml` 이 push 와 PR 마다 `windows-latest` 에서 위 단계와 `app/` 의 타입 검사·테스트·번들 빌드를 돌립니다. 기여 규칙은 [CONTRIBUTING.md](CONTRIBUTING.md), 보안 문제 신고는 [SECURITY.md](SECURITY.md) 에 있습니다.
 
 - **`app/shared/timeline.ts` 와 `hooks/timeline.ts` 는 바이트까지 같은 파일이어야 합니다.** 앱과 플러그인이 같은 계산으로 "근무에 영향을 주는 시간" 을 판단하기 때문입니다. 한쪽을 고치면 다른 쪽에 그대로 복사하세요. 다르면 앱 테스트가 실패합니다.
 - **화면 캡처 모드** — `npm run build` 뒤 환경 변수 `CLOCKOUT_SHOT_DIR=<폴더>` 를 주고 `npx electron .` 으로 실행하면, 앱이 창들(상태바, 예약 창과 그 확인 창들, 설정, 사용설명서, 연동 점검)을 PNG 로 저장하고 스스로 종료합니다. 이 모드에서는 세션을 깨우지 않습니다. 실제 세션 이름이 찍히지 않게 하려면 `CLAUDE_CONFIG_DIR` 을 가짜 폴더로 지정하고, 그 안에 시연용 세션 파일을 두세요.

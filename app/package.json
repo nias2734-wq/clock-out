@@ -1,7 +1,7 @@
 {
   "name": "clock-out-app",
   "productName": "clock-out",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Clock out. Your Claude Code schedules keep working. Desktop app: status bar, schedule list, session revival.",
   "main": "./out/main/index.js",
   "private": true,

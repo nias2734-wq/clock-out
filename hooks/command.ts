@@ -1,5 +1,6 @@
 import type { EngineInterface, On } from 'claude-code'
 
+import { readAppState } from './appState'
 import { buildOverview, formatOverview, refreshOverview } from './overview'
 import { reregisterExpiring } from './reregister'
 import { findSessionId, reviveSession } from './revive'
@@ -81,6 +82,11 @@ export async function toggleHide($: EngineInterface, jobId: string): Promise<str
   const owner = overview.sessions.find(s => s.jobs.some(j => j.id === jobId))
   if (owner === undefined) return `No job ${jobId} in any session.`
   if (owner.isAlive) return `${jobId} belongs to running session ${owner.shortId}: delete it there with CronDelete ${jobId}.`
+  // the app's hidden (app-state.json) wins over dismissed, so toggling dismissed would change nothing; only the app writes it
+  const appHidden = (await readAppState($))?.sessions[owner.sessionId]?.hidden
+  if (appHidden !== undefined && Object.prototype.hasOwnProperty.call(appHidden, jobId)) {
+    return `${jobId} was ${appHidden[jobId] === true ? 'hidden' : 'shown'} in the clock-out app: change it there (the app's choice overrides this command).`
+  }
   const paths = await clockOutPaths($)
   let hidden = false
   await updateSessionFile($, sessionFilePath(paths, owner.sessionId), () => emptySessionFile(owner.sessionId, owner.cwd), file => {

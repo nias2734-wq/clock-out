@@ -26,8 +26,9 @@ function fixture(on: On, extra: Record<string, unknown> = {}): Map<string, strin
 
 const ok = (stdout: string, stderr = '') => ({ value: { exitCode: 0, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 
-test('first revive passes the permission flag, records bgSince, and sends the renewal message', async ($, on) => {
+test('first revive passes the permission flag and sends the renewal message, without writing the woken session file', async ($, on) => {
   const files = fixture(on)
+  const before = files.get(FILE)
   const clock = mock.clock(on)
   await clock.set(NOW)
   const calls: string[][] = []
@@ -43,7 +44,7 @@ test('first revive passes the permission flag, records bgSince, and sends the re
   expect(calls[0]).toEqual(['claude', 'agents', '--json', '--all'])
   expect(calls[1]?.slice(0, 5)).toEqual(['claude', '--bg', '--resume', STOPPED, '--dangerously-skip-permissions'])
   expect(calls[1]?.[5]).toContain('cron "3 21 * * *" (recurring) prompt: nightly sync')
-  expect(JSON.parse(files.get(FILE) ?? '{}').bgSince).toBe(NOW)
+  expect(files.get(FILE)).toBe(before)   // the woken session records bgSince itself at start (heartbeat.ts)
 })
 
 test('a later revive passes no flags, and a copy started by mistake is stopped', async ($, on) => {
@@ -78,4 +79,30 @@ test('revive refuses a running session and an unknown prefix', async ($, on) => 
   const unknown = await runCommand($, 'clock-out', 'revive zzzz')
   expect(unknown.text).toContain('No single')
   expect(calls).toEqual([])
+})
+
+test('bgSince kept only in the app state file (0.13) also means no flags', async ($, on) => {
+  const files = fixture(on)
+  files.set('/home/alice/.claude/clock-out/app-state.json', JSON.stringify({ version: 1, sessions: { [STOPPED]: { bgSince: NOW - 24 * 60 * MIN } } }))
+  await mock.clock(on).set(NOW)
+  const calls: string[][] = []
+  on('process.run', (_$, e) => { calls.push([...e.argv]); return ok('backgrounded · bbbb0000') })
+
+  await runCommand($, 'clock-out', 'revive bbbb0000')
+
+  expect(calls[0]?.slice(0, 4)).toEqual(['claude', '--bg', '--resume', STOPPED])
+  expect(calls[0]).not.toContain('--dangerously-skip-permissions')
+  expect(calls.some(c => c[1] === 'agents')).toBe(false)
+})
+
+test('a session file with kind background (recorded by that session at start) also means no flags', async ($, on) => {
+  fixture(on, { kind: 'background' })
+  await mock.clock(on).set(NOW)
+  const calls: string[][] = []
+  on('process.run', (_$, e) => { calls.push([...e.argv]); return ok('backgrounded · bbbb0000') })
+
+  await runCommand($, 'clock-out', 'revive bbbb0000')
+
+  expect(calls[0]?.slice(0, 4)).toEqual(['claude', '--bg', '--resume', STOPPED])
+  expect(calls[0]).not.toContain('--dangerously-skip-permissions')
 })

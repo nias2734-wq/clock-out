@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { doneOf, jobsFromTranscript, liveTranscriptJobs, overviewOf, prunedCleared, remoteIsOn, sessionViewOf, validateSessionFile } from './schedule'
+import { dismissedWith, doneOf, jobsFromTranscript, liveTranscriptJobs, overviewOf, prunedCleared, remoteIsOn, sessionViewOf, validateSessionFile } from './schedule'
 import type { SessionFile } from './schedule'
 
 const NOW = new Date(2026, 9, 19, 10, 0).getTime()
@@ -127,5 +127,12 @@ describe('remoteIsOn', () => {
     expect(remoteIsOn({ enabled: true, isAlive: false })).toBe(false)    // starting or failed: the button starts it as before
     expect(remoteIsOn({ enabled: false, isAlive: true })).toBe(false)    // turned off, claude stop not through yet
     expect(remoteIsOn(undefined)).toBe(false)
+  })
+})
+
+describe('dismissedWith', () => {
+  it('the app-state hidden map overrides the session file dismissed list (true hides, false shows again)', () => {
+    expect(dismissedWith(['a', 'b'], undefined).sort()).toEqual(['a', 'b'])
+    expect(dismissedWith(['a', 'b'], { b: false, c: true }).sort()).toEqual(['a', 'c'])
   })
 })
