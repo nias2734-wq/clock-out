@@ -53,14 +53,14 @@ function KoContent() {
     <>
       <Section title="기능">
         <h3>상태바</h3>
-        <p>화면 위에 항상 떠 있는 한 줄입니다. 왼쪽 끝 손잡이(⋮⋮)를 끌어서 원하는 곳에 둡니다. 원격 예약 작업 세션이 켜져 있으면 "원격 켜짐 / 시작 중 / 주소 준비 중 / 오류" 를 글자로 보여 주고, 누르면 그 세션을 엽니다.</p>
+        <p>화면 위에 항상 떠 있는 한 줄입니다. 버튼(예약 · 종료) 밖 아무 곳이나 끌어서(또는 왼쪽 끝 손잡이 ⋮⋮ 로) 원하는 곳에 둡니다. 원격 예약 작업 세션이 켜져 있으면 "원격 켜짐 / 시작 중 / 주소 준비 중 / 오류" 를 글자로 보여 주고, 누르면 그 세션을 엽니다.</p>
         <ul>
           <li><b>5시간 · 주간 · 모델별 주간(예: Fable)</b> 사용량 막대와 리셋까지 남은 시간. 리셋 시각은 마우스를 올리면 보입니다. 80% 넘으면 빨강, 50% 넘으면 주황입니다.</li>
           <li>5시간 리셋 시각이 설정한 근무 리듬과 어긋나면 남은 시간이 주황으로 보입니다.</li>
           <li>사용량 조회가 실패하면(로그인 만료·네트워크·조회 제한) 막대가 흐려지고, 마우스를 올리면 "마지막 조회 실패 — 몇 시 값" 이 보입니다. 예약 보기와 깨우기는 그대로 동작합니다.</li>
           <li><b>다음</b>: 가장 가까운 예약 시각과 그 세션 이름.</li>
           <li>빨간 <b>bypass</b> 표시: 되살린 세션이 아무것도 묻지 않는 모드로 켜집니다(설정에서 끔).</li>
-          <li>오른쪽 버튼: 예약(예약 창 열기) · 종료. 상태바를 <b>우클릭</b>하면 메뉴가 나옵니다: 사용량 새로고침 · 예약 창 열기 · 원격으로 예약 작업 모니터링 · 설정 · 연동 점검 · 사용설명서 · 종료.</li>
+          <li>오른쪽 버튼: 예약(예약 창 열기) · 종료. 상태바를 <b>우클릭</b>하면 메뉴가 나옵니다: 사용량 새로고침 · 예약 창 열기 · 원격으로 예약 작업 모니터링 · 설정 · 연동 점검 · 사용설명서 · 상태바 숨기기 · 종료. 숨긴 상태바는 작업 표시줄 오른쪽 clock-out 트레이 아이콘(안 보이면 ^ 안)을 누르면 다시 보입니다.</li>
         </ul>
         <h3>예약 창</h3>
         <ul>
@@ -166,7 +166,7 @@ function EnContent() {
     <>
       <Section title="Features">
         <ul>
-          <li><b>Status bar</b>: drag it by the grip (⋮⋮) at its left end. While the remote jobs session is on it says Remote on / starting / address pending / error in words (click to open it). 5-hour, weekly and per-model weekly usage (e.g. Fable) with reset countdowns (the reset time shows on hover), the next job, a red <b>bypass</b> pill when bypass is on, buttons for jobs · quit. When a usage fetch fails (expired login, network, rate limit) the bars fade and the hover says when the values are from; jobs and wakes carry on. <b>Right-click</b> the bar for the menu: refresh usage · open the jobs panel · monitor jobs remotely · settings · setup check · user guide · quit.</li>
+          <li><b>Status bar</b>: drag it anywhere but its buttons (or by the grip ⋮⋮ at its left end). While the remote jobs session is on it says Remote on / starting / address pending / error in words (click to open it). 5-hour, weekly and per-model weekly usage (e.g. Fable) with reset countdowns (the reset date and time show on hover, e.g. 10/24(Sat) 05:00), the next job, a red <b>bypass</b> pill when bypass is on, buttons for jobs · quit. When a usage fetch fails (expired login, network, rate limit) the bars fade and the hover says when the values are from; jobs and wakes carry on. <b>Right-click</b> the bar for the menu: refresh usage · open the jobs panel · monitor jobs remotely · settings · setup check · user guide · hide the status bar · quit. Click the clock-out tray icon (under ^ if not shown) to bring a hidden bar back.</li>
           <li><b>Jobs panel</b>: sessions (green = running), job cards with real next run, expiry, last run; <b>Revive</b>, <b>Open session</b>, <b>No auto-wake</b> (a stopped session is not woken for that job; the list and the job itself are not affected). ⚠ sessions are never revived automatically.</li>
           <li><b>Run results</b>: <b>answered · success not verified</b> (grey) or <b>✗ failed</b> (red: ended with an error, abort or refusal). clock-out only knows that Claude answered. Check the result yourself to know whether the job worked.</li>
           <li><b>Missed jobs</b>: jobs of stopped sessions that went by while the PC was off or asleep (last 24 hours) are listed on top of the jobs panel with a notice, found on app start and on resume from sleep. They are not run again on their own: <b>Run now</b> wakes the session with the job's prompt as its first message, <b>Close</b> drops it.</li>

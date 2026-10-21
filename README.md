@@ -25,6 +25,14 @@ so your jobs run on time after you have gone home.
 
 ![jobs panel](docs/screenshots/schedule.png)
 
+## Quick start
+
+1. Download `clock-out-setup-x.y.z.exe` from [Releases](https://github.com/nias2734-wq/clock-out/releases) and run it.
+2. In the **setup check** that opens, press the button of any red item — usually just **Install plugin**.
+3. Open a new Claude Code session and schedule as usual, e.g. `"pull develop every day at 21:03"`. Click **Jobs** on the status bar to see it. Close the session — the app wakes it before the job is due.
+
+Enter your work hours in Settings so the usage resets line up with your day.
+
 ## Why clock-out
 
 Claude Code already has schedules that run with no session open, but none of them edit a repository on your machine *and* continue yesterday's work with that session's context.
@@ -47,19 +55,12 @@ So when you say "schedule this", Claude picks `CronCreate`, and the job silently
 - **Done · last 7 days** — fired one-shot jobs and the runs of the last 7 days stay in the panel, one line each. Sessions with nothing left are grouped at the bottom of the list.
 - **Clean up the list** — remove a session's done entries now instead of waiting 7 days; a finished background session (about 0.5 GB of memory) is stopped first. **Clean up done** does it for every finished session at once, and finished background sessions can be stopped automatically after 30 idle minutes.
 - **Click a session id to copy the command that reopens it** — `claude attach <id>` while it runs, else `claude --resume <id>` in its folder (PowerShell and cmd).
-- **Status bar with a right-click menu** — usage and the next job in one always-on-top line; refresh, remote monitoring, settings, setup check and the guide are on its right-click menu.
+- **Status bar you can drag, hide or right-click** — usage and the next job in one always-on-top line. Drag it anywhere but its buttons, hide it to the tray icon, and find refresh, remote monitoring, settings, setup check and the guide on its right-click menu.
+- **New-version notice** — once a day the app checks GitHub for a newer release and tells you; nothing is downloaded or installed.
 - **Lines up the 5-hour usage windows** — given your work hours, the app sends a tiny call (`claude -p ok --model haiku`, the "ping") at set times so the afternoon and the nightly jobs each start with a fresh 5-hour window. A timeline in Settings shows the day.
 - **Warns about jobs in hours that affect work** — such jobs are red in the jobs panel and on the timeline. The plugin refuses a new job in those hours once, with the reason and the hours that have no effect; asking again within 30 minutes goes through.
 - **Remote jobs session** — after work, see every job and give its session instructions from the Claude mobile app or claude.ai/code. Turn it on and off from the same button.
 - **Delete a job** — from its card; the session that owns the job deletes it.
-
-## Quick start
-
-1. Download `clock-out-setup-x.y.z.exe` from [Releases](https://github.com/nias2734-wq/clock-out/releases) and run it.
-2. In the **setup check** that opens, press the button of any red item — usually just **Install plugin**.
-3. Open a new Claude Code session and schedule as usual, e.g. `"pull develop every day at 21:03"`. Click **Jobs** on the status bar to see it. Close the session — the app wakes it before the job is due.
-
-Enter your work hours in Settings so the usage resets line up with your day.
 
 ## Requirements
 
@@ -71,6 +72,7 @@ Enter your work hours in Settings so the usage resets line up with your day.
 
 | Claude Code | Checked by | What was checked |
 | --- | --- | --- |
+| 2.1.306 | developer, 2026-10-21 (0.14.0) | `claude plugin validate .` passes, `claude plugin test .` 69 pass, app tests 108 pass |
 | 2.1.304 | developer, 2026-10-20 | `claude plugin validate .` passes, `claude plugin test .` 40 pass, plugin API types + `tsc -p .` pass on a fresh clone |
 | 2.1.304 | external review, 2026-10-20 (commit `1ec1b94`) | `claude plugin validate .` passes, `claude plugin test .` 40 pass, app tests 64 pass |
 | 2.1.303 | developer | the plugin loaded from this repository in the developer's own sessions |
@@ -135,15 +137,16 @@ This also clears the plugin's options (values changed in `/config`).
 
 ### Status bar
 
-Always on top; drag it anywhere by the grip (⋮⋮) at its left end. While the remote jobs session is on, the bar says so in words (Remote on / starting / address pending / error); click it to open the session.
+Always on top; drag it anywhere but its buttons (or by the grip ⋮⋮ at its left end) to move it. While the remote jobs session is on, the bar says so in words (Remote on / starting / address pending / error); click it to open the session.
 
 ![status bar, dark](docs/screenshots/statusbar-dark.png)
 
-- **5-hour, weekly and per-model weekly usage** (e.g. Fable) with bars and the time left to each reset; the reset time shows on hover. Red above 80 %, orange above 50 %. The 5-hour countdown turns orange when its reset is off your work rhythm.
+- **5-hour, weekly and per-model weekly usage** (e.g. Fable) with bars and the time left to each reset; the reset date and time show on hover (e.g. 10/24(Sat) 05:00). Red above 80 %, orange above 50 %. The 5-hour countdown turns orange when its reset is off your work rhythm.
 - **next** — the nearest job and its session.
 - A red **bypass** pill when revived sessions run with no permission prompts (turn it off in Settings).
 - Buttons on the right: **Jobs** (opens the jobs panel) and quit.
-- **Right-click** the bar for the menu: refresh usage · open the jobs panel · monitor jobs remotely (open / turn off while it runs) · settings · setup check · user guide · quit. The tray icon has the same menu.
+- **Right-click** the bar for the menu: refresh usage · open the jobs panel · monitor jobs remotely (open / turn off while it runs) · settings · setup check · user guide · hide the status bar · quit.
+- **Hide** it from that menu; click the clock-out tray icon (under ^ at the right of the taskbar if not shown) to bring it back. The tray icon's own menu has refresh, show / hide the status bar, settings, setup check, guide, data folder, log and quit.
 
 ### Jobs panel
 
@@ -237,7 +240,7 @@ Open it from the status bar's right-click menu or the jobs panel footer.
 - **Job run mode** — the default (Quiet · Notify · Open on screen) and *Clean up finished background sessions* after N idle minutes (on, 30).
 - **Permissions of a revived session** — see [Permissions and security](#permissions-and-security).
 - **Remote jobs session** — on/off, job result notices (off / failures only / every run), the session's permission.
-- **Display** — theme (follow Windows · light · dark), language (한국어 · English), start with Windows, read transcripts of sessions that ran without the plugin.
+- **Display** — theme (follow Windows · light · dark), language (한국어 · English), start with Windows, new-version notice, read transcripts of sessions that ran without the plugin.
 
 ![settings timeline](docs/screenshots/settings-timeline.png)
 
@@ -391,6 +394,14 @@ clock-out 은 흩어진 예약을 한 화면에 모아 보여 주고, 꺼진 세
 
 ![예약 창](docs/screenshots/ko-schedule.png)
 
+### 빠른 시작
+
+1. [Releases](https://github.com/nias2734-wq/clock-out/releases) 에서 `clock-out-setup-x.y.z.exe` 를 받아 실행합니다.
+2. 이어서 뜨는 **연동 점검** 에서 빨간 항목의 버튼을 누릅니다. 보통은 **플러그인 설치** 하나면 됩니다.
+3. Claude Code 세션을 새로 열고 평소처럼 예약을 겁니다. 예: `"매일 21:03 에 develop 을 pull 해 줘"`. 상태바의 **예약** 을 눌러 확인합니다. 세션을 꺼도 예약 시각 전에 앱이 다시 켭니다.
+
+토큰 초기화가 하루 일과에 맞도록 설정에 근무시간을 넣으세요.
+
 ### 왜 clock-out 인가
 
 Claude Code 에서 세션이 꺼져도 도는 예약은 이미 있습니다. 그런데 내 PC 의 저장소를 고치고, 어제 하던 작업을 그 세션의 맥락 그대로 이어서 하는 예약은 없습니다.
@@ -413,19 +424,12 @@ Claude Code 에서 세션이 꺼져도 도는 예약은 이미 있습니다. 그
 - **완료 · 최근 7일** — 실행된 1회 예약과 최근 7일의 실행 기록이 한 줄씩 예약 창에 남습니다. 남은 예약 없이 이 기록만 있는 세션은 목록 맨 아래에 묶입니다.
 - **목록에서 정리** — 7일을 기다리지 않고 그 세션의 완료 기록을 바로 지웁니다. 끝난 백그라운드 세션(메모리 약 0.5GB)은 먼저 끕니다. **완료 정리** 는 끝난 세션 전부를 한 번에 정리하고, 끝난 백그라운드 세션은 30분 쉬면 자동으로 끌 수도 있습니다.
 - **세션 id 를 누르면 다시 여는 명령 복사** — 켜져 있으면 `claude attach <id>`, 꺼져 있으면 작업 폴더에서 `claude --resume <id>`(PowerShell · cmd 각각).
-- **우클릭 메뉴가 있는 상태바** — 사용량과 다음 예약을 항상 위에 떠 있는 한 줄로 보여 주고, 새로고침 · 원격 모니터링 · 설정 · 연동 점검 · 사용설명서는 상태바 우클릭 메뉴에 있습니다.
+- **끌고 숨기고 우클릭하는 상태바** — 사용량과 다음 예약을 항상 위에 떠 있는 한 줄로 보여 줍니다. 버튼 밖 아무 곳이나 끌어 옮기고, 트레이 아이콘으로 숨길 수 있으며, 새로고침 · 원격 모니터링 · 설정 · 연동 점검 · 사용설명서는 우클릭 메뉴에 있습니다.
+- **새 버전 알림** — 하루 한 번 GitHub 에서 새 릴리스가 있는지 확인해 알려 줍니다. 내려받거나 설치하지 않습니다.
 - **5시간 사용량 초기화 맞추기** — Claude 사용량은 5시간 단위 창으로 쌓였다가 초기화됩니다. 근무시간을 알려 주면 정해진 시각에 아주 작은 호출(`claude -p ok --model haiku`, 이하 "핑")을 보내, 오후 업무와 퇴근 뒤 야간 예약이 각각 새 5시간으로 시작하게 합니다. 설정의 타임라인에서 하루가 어떻게 흘러가는지 그림으로 확인합니다.
 - **근무에 영향을 주는 시간의 예약 경고** — 어떤 시간에 도는 예약은 출근 때 사용량이 0% 에서 시작하지 못하게 하거나 초기화 시각을 밀어냅니다. 그런 예약은 예약 창과 타임라인에서 빨갛게 표시하고, 플러그인은 그 시간에 새 예약을 걸 때 한 번 거절하며 이유와 영향 없는 시간을 알려 줍니다. 같은 요청을 30분 안에 다시 하면 그대로 걸립니다.
 - **원격 예약 작업 세션** — 퇴근 뒤 휴대폰 Claude 앱이나 claude.ai/code 에서 모든 예약을 보고 그 세션에 지시합니다. 켠 버튼으로 다시 끕니다.
 - **예약 삭제** — 예약 카드의 삭제 버튼으로 지웁니다. 삭제는 그 예약을 가진 세션이 직접 합니다.
-
-### 빠른 시작
-
-1. [Releases](https://github.com/nias2734-wq/clock-out/releases) 에서 `clock-out-setup-x.y.z.exe` 를 받아 실행합니다.
-2. 이어서 뜨는 **연동 점검** 에서 빨간 항목의 버튼을 누릅니다. 보통은 **플러그인 설치** 하나면 됩니다.
-3. Claude Code 세션을 새로 열고 평소처럼 예약을 겁니다. 예: `"매일 21:03 에 develop 을 pull 해 줘"`. 상태바의 **예약** 을 눌러 확인합니다. 세션을 꺼도 예약 시각 전에 앱이 다시 켭니다.
-
-토큰 초기화가 하루 일과에 맞도록 설정에 근무시간을 넣으세요.
 
 ### 요구사항
 
@@ -437,6 +441,7 @@ Claude Code 에서 세션이 꺼져도 도는 예약은 이미 있습니다. 그
 
 | Claude Code | 확인한 사람 | 확인한 것 |
 | --- | --- | --- |
+| 2.1.306 | 개발자, 2026-10-21 (0.14.0) | `claude plugin validate .` 통과, `claude plugin test .` 69개 통과, 앱 테스트 108개 통과 |
 | 2.1.304 | 개발자, 2026-10-20 | `claude plugin validate .` 통과, `claude plugin test .` 40개 통과, 새 clone 에서 플러그인 API 타입 생성 + `tsc -p .` 통과 |
 | 2.1.304 | 외부 평가, 2026-10-20 (커밋 `1ec1b94`) | `claude plugin validate .` 통과, `claude plugin test .` 40개 통과, 앱 테스트 64개 통과 |
 | 2.1.303 | 개발자 | 개발자 본인 세션에서 이 저장소의 플러그인을 불러와 사용 |
@@ -501,13 +506,14 @@ claude plugin marketplace remove clock-out
 
 #### 상태바
 
-화면 위에 항상 떠 있는 한 줄입니다. 왼쪽 끝 손잡이(⋮⋮)를 끌어서 원하는 곳에 둡니다. 원격 예약 작업 세션이 켜져 있으면 "원격 켜짐 / 시작 중 / 주소 준비 중 / 오류" 를 글자로 보여 주고, 누르면 그 세션을 엽니다.
+화면 위에 항상 떠 있는 한 줄입니다. 버튼(예약 · 종료) 밖 아무 곳이나 끌어서(또는 왼쪽 끝 손잡이 ⋮⋮ 로) 원하는 곳에 둡니다. 원격 예약 작업 세션이 켜져 있으면 "원격 켜짐 / 시작 중 / 주소 준비 중 / 오류" 를 글자로 보여 주고, 누르면 그 세션을 엽니다.
 
-- **5시간 · 주간 · 모델별 주간(예: Fable)** 사용량 막대와 초기화까지 남은 시간. 초기화 시각은 마우스를 올리면 보입니다. 80% 넘으면 빨강, 50% 넘으면 주황입니다. 5시간 초기화 시각이 설정한 근무 리듬과 어긋나면 남은 시간이 주황으로 보입니다.
+- **5시간 · 주간 · 모델별 주간(예: Fable)** 사용량 막대와 초기화까지 남은 시간. 초기화 날짜와 시각은 마우스를 올리면 보입니다(예: 10/24(토) 05:00). 80% 넘으면 빨강, 50% 넘으면 주황입니다. 5시간 초기화 시각이 설정한 근무 리듬과 어긋나면 남은 시간이 주황으로 보입니다.
 - **다음** — 가장 가까운 예약 시각과 그 세션 이름.
 - 빨간 **bypass** 표시 — 되살린 세션이 아무것도 묻지 않는 모드로 켜집니다(설정에서 끔).
 - 오른쪽 버튼 — **예약**(예약 창 열기) · 종료.
-- 상태바를 **우클릭** 하면 메뉴가 나옵니다: 사용량 새로고침 · 예약 창 열기 · 원격으로 예약 작업 모니터링(켜져 있으면 열기 · 끄기) · 설정 · 연동 점검 · 사용설명서 · 종료. 트레이 아이콘 메뉴도 같습니다.
+- 상태바를 **우클릭** 하면 메뉴가 나옵니다: 사용량 새로고침 · 예약 창 열기 · 원격으로 예약 작업 모니터링(켜져 있으면 열기 · 끄기) · 설정 · 연동 점검 · 사용설명서 · 상태바 숨기기 · 종료.
+- 그 메뉴의 **상태바 숨기기** 로 숨기고, 작업 표시줄 오른쪽 clock-out 트레이 아이콘(안 보이면 ^ 안)을 누르면 다시 보입니다. 트레이 아이콘 메뉴에는 사용량 새로고침 · 상태바 보이기/숨기기 · 설정 · 연동 점검 · 사용설명서 · 데이터 폴더 열기 · 로그 열기 · 종료가 있습니다.
 
 #### 예약 창
 
@@ -603,7 +609,7 @@ claude plugin marketplace remove clock-out
 - **예약 실행 방식** — 기본값(조용히 · 알림 · 화면에 열기)과 완료된 백그라운드 세션 자동 정리(켜짐, 쉰 지 30분 뒤).
 - **되살린 세션의 권한** — 아래 "권한과 보안" 참고.
 - **원격 예약 작업 세션** — 켜기, 예약 결과 알림(끔 / 실패만 / 모든 실행), 이 세션의 권한.
-- **화면** — 테마(Windows 설정 따라가기 · 라이트 · 다크), 언어(한국어 · English), Windows 로그인 시 자동 실행, 플러그인 없이 돈 세션의 대화 기록도 읽기.
+- **화면** — 테마(Windows 설정 따라가기 · 라이트 · 다크), 언어(한국어 · English), Windows 로그인 시 자동 실행, 새 버전 알림, 플러그인 없이 돈 세션의 대화 기록도 읽기.
 
 ![설정 타임라인](docs/screenshots/ko-settings-timeline.png)
 
