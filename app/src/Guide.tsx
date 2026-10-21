@@ -53,7 +53,7 @@ function KoContent() {
     <>
       <Section title="기능">
         <h3>상태바</h3>
-        <p>화면 위에 항상 떠 있는 한 줄입니다. 끌어서 원하는 곳에 둡니다.</p>
+        <p>화면 위에 항상 떠 있는 한 줄입니다. 왼쪽 끝 손잡이(⋮⋮)를 끌어서 원하는 곳에 둡니다. 원격 예약 작업 세션이 켜져 있으면 "원격 켜짐 / 시작 중 / 주소 준비 중 / 오류" 를 글자로 보여 주고, 누르면 그 세션을 엽니다.</p>
         <ul>
           <li><b>5시간 · 주간 · 모델별 주간(예: Fable)</b> 사용량 막대와 리셋까지 남은 시간. 리셋 시각은 마우스를 올리면 보입니다. 80% 넘으면 빨강, 50% 넘으면 주황입니다.</li>
           <li>5시간 리셋 시각이 설정한 근무 리듬과 어긋나면 남은 시간이 주황으로 보입니다.</li>
@@ -80,7 +80,7 @@ function KoContent() {
         <ul>
           <li>예약 <b>10분 전</b>에 그 세션이 꺼져 있으면 켭니다.</li>
           <li>반복 예약이 <b>7일 만료 하루 전</b>이면 세션을 켜서 스스로 다시 걸게 합니다(실행 중인 세션은 플러그인이 알아서 다시 겁니다).</li>
-          <li><b>퇴근 5분 전</b>, 근무 요일에 한 번: 예약이 남은 꺼진 세션을 모두 켭니다.</li>
+          <li><b>퇴근 5분 전</b>, 근무 요일에 한 번: 예약이 남은 꺼진 세션을 켭니다. '자동 깨우기 제외' 예약만 남은 세션, 경고가 붙은 세션, 깨우기가 차단된 세션, 30분 안에 깨운 세션은 켜지 않습니다.</li>
           <li>깨우기가 실패하면 5초 · 15초 · 45초 · 2분 뒤에 다시 시도하고, 그래도 안 되면 10분 뒤에 다시 시도합니다. 로그인·권한 문제로 실패하면 다시 시도하지 않고 세션 머리에 빨간 줄로 알립니다.</li>
           <li>깨우기에 성공한 세션은 30분 안에 다시 켜지 않습니다. 모든 되살림은 알림과 로그로 남습니다.</li>
         </ul>
@@ -148,12 +148,12 @@ function KoContent() {
         <details className="g-sub"><summary><ChevronRight size={14} className="chev" />같은 세션이 두 개 생겼습니다</summary>
           <p>예전 위젯이나 PowerShell 서비스가 함께 돌고 있을 수 있습니다. 위 점검의 "겹치는 프로그램"에서 끄기를 누르세요. 남은 복사본은 <code>claude stop &lt;id&gt;</code> 로 멈춥니다.</p></details>
         <details className="g-sub"><summary><ChevronRight size={14} className="chev" />사용량이 "갱신 대기"로 멈춰 있습니다</summary>
-          <p>사용량 서버는 10분에 5번 넘게 물으면 잠시 막습니다. 앱이 5분부터 최대 60분까지 기다렸다가 다시 묻습니다. 그동안 막대는 흐리게 마지막 값을 보여 주고, 예약 보기와 깨우기는 그대로 동작합니다.</p></details>
+          <p>사용량 서버는 짧은 시간에 여러 번 물으면 잠시 막습니다(관찰한 값으로 10분에 5번 안팎, 공개된 규칙은 아닙니다). 앱이 5분부터 최대 60분까지 기다렸다가 다시 묻습니다. 그동안 막대는 흐리게 마지막 값을 보여 주고, 예약 보기와 깨우기는 그대로 동작합니다.</p></details>
       </Section>
       <Section title="데이터와 개인정보">
         <ul>
-          <li>PC 밖으로 나가는 것은 사용량 조회(api.anthropic.com) 하나입니다. 로그인 토큰은 저장하거나 기록하지 않습니다.</li>
-          <li>포트를 열지 않고, 자동 업데이트·원격 전송이 없습니다.</li>
+          <li>PC 밖으로 나가는 것은 사용량 조회(api.anthropic.com)와 새 버전 확인(api.github.com) 두 가지입니다. 로그인 토큰은 저장하거나 기록하지 않습니다.</li>
+          <li>포트를 열지 않고, 자동 업데이트·원격 전송이 없습니다. 새 버전 알림(설정에서 끌 수 있음)은 하루 한 번 GitHub 의 최신 릴리스 번호만 확인하고, 내려받거나 설치하지 않습니다.</li>
           <li>파일 위치: 세션 기록 <code>~/.claude/clock-out/sessions</code>, 앱 기록(깨우기·적용된 권한) <code>~/.claude/clock-out/app-state.json</code>, 앱 설정 <code>~/.claude/clock-out/app-settings.json</code>, 로그 <code>~/.claude/clock-out/app.log</code>.</li>
         </ul>
       </Section>
@@ -166,7 +166,7 @@ function EnContent() {
     <>
       <Section title="Features">
         <ul>
-          <li><b>Status bar</b>: 5-hour, weekly and per-model weekly usage (e.g. Fable) with reset countdowns (the reset time shows on hover), the next job, a red <b>bypass</b> pill when bypass is on, buttons for jobs · quit. When a usage fetch fails (expired login, network, rate limit) the bars fade and the hover says when the values are from; jobs and wakes carry on. <b>Right-click</b> the bar for the menu: refresh usage · open the jobs panel · monitor jobs remotely · settings · setup check · user guide · quit.</li>
+          <li><b>Status bar</b>: drag it by the grip (⋮⋮) at its left end. While the remote jobs session is on it says Remote on / starting / address pending / error in words (click to open it). 5-hour, weekly and per-model weekly usage (e.g. Fable) with reset countdowns (the reset time shows on hover), the next job, a red <b>bypass</b> pill when bypass is on, buttons for jobs · quit. When a usage fetch fails (expired login, network, rate limit) the bars fade and the hover says when the values are from; jobs and wakes carry on. <b>Right-click</b> the bar for the menu: refresh usage · open the jobs panel · monitor jobs remotely · settings · setup check · user guide · quit.</li>
           <li><b>Jobs panel</b>: sessions (green = running), job cards with real next run, expiry, last run; <b>Revive</b>, <b>Open session</b>, <b>No auto-wake</b> (a stopped session is not woken for that job; the list and the job itself are not affected). ⚠ sessions are never revived automatically.</li>
           <li><b>Run results</b>: <b>answered · success not verified</b> (grey) or <b>✗ failed</b> (red: ended with an error, abort or refusal). clock-out only knows that Claude answered. Check the result yourself to know whether the job worked.</li>
           <li><b>Missed jobs</b>: jobs of stopped sessions that went by while the PC was off or asleep (last 24 hours) are listed on top of the jobs panel with a notice, found on app start and on resume from sleep. They are not run again on their own: <b>Run now</b> wakes the session with the job's prompt as its first message, <b>Close</b> drops it.</li>
@@ -175,7 +175,7 @@ function EnContent() {
           <li><b>Done · last 7 days</b>: fired one-shots and the runs of the last 7 days (answered · not verified / failed) stay in the jobs panel one line each, the newest 3 first ("n more" for the rest, the answer on hover), folded while jobs are left; sessions with nothing left gather in <b>Sessions with only done jobs</b> at the bottom of the list; <b>Open session</b> attaches while it runs, else opens it with <code>claude --resume</code>.</li>
           <li><b>Clean up the list</b>: done entries drop off by themselves after 7 days; this button at the head of the done list removes them now (the conversation stays, and the command under the session id opens it again). A background session with no job left holds about 0.5 GB of memory, so the button stops it first; a stopped or terminal session is only cleaned off the list. It is off while a job runs; pressing it shows the session name and id and what it will do (clean up only / stop and clean up) and asks once, with any warning (waits for your answer, an attach window is open) in the same question. <b>Clean up done</b> at the bottom lists every background session with no job left and every stopped session with only done jobs, and cleans them up at once (sessions linked by Remote Control are left out). With <b>Clean up finished background sessions</b> on in Settings (30 min by default), a session with no job left is stopped by itself (skipped while it waits for an answer or an attach window is open).</li>
           <li><b>Click a session id</b> for the command that opens it again — <code>claude attach &lt;id&gt;</code> while it runs, else <code>claude --resume &lt;id&gt;</code> in its folder (PowerShell and cmd) — and <b>Copy</b> it into a terminal.</li>
-          <li><b>Automatic revival</b>: 10 minutes before a job, a day before a recurring job expires, and once 5 minutes before your work end; never twice within 30 minutes of a successful wake. A failed wake is tried again after 5 s, 15 s, 45 s and 2 min, then 10 minutes later; a login or permission failure is not tried again.</li>
+          <li><b>Automatic revival</b>: 10 minutes before a job, a day before a recurring job expires, and once 5 minutes before your work end (a stopped session that still has jobs, except jobs with No auto-wake and blocked or warned sessions); never twice within 30 minutes of a successful wake. A failed wake is tried again after 5 s, 15 s, 45 s and 2 min, then 10 minutes later; a login or permission failure is not tried again.</li>
           <li><b>Window alignment</b> (experimental, off by default): it relies on observed behaviour, not on anything Anthropic guarantees, and the reset times are not guaranteed. A tiny <code>claude -p ok</code> call 5 h before lunch end and at lunch end tries to start the afternoon and the nightly jobs each with a fresh window. Settings › Work hours and token resets draws today on a timeline.</li>
         </ul>
       </Section>
@@ -196,7 +196,7 @@ function EnContent() {
           <p>Reads those files, decides liveness from heartbeats and Claude Code's own <code>~/.claude/sessions</code>, and wakes a stopped session with <code>claude --bg --resume &lt;id&gt;</code> and a fixed first message. Permission flags go only on the first background start (later flags would start a copy, which the app stops). Work mode allows reading and editing files, git status/diff/log/fetch/pull, build and test by default, and blocks push, publish, reset --hard, clean and rm -rf (also under bypass); Settings › <b>Recommended defaults</b> restores both lists.</p></details>
       </Section>
       <Section title="Data and privacy">
-        <p>The only network call is the usage query to api.anthropic.com; the login token is never stored or logged. No port, no auto-update. Files live in <code>~/.claude/clock-out/</code>.</p>
+        <p>The app's own network calls are the usage query to api.anthropic.com and the new-version check; the login token is never stored or logged. No port, no auto-update; the new-version notice (can be turned off in Settings) reads the latest release number from GitHub once a day and downloads nothing. Files live in <code>~/.claude/clock-out/</code>.</p>
       </Section>
     </>
   )

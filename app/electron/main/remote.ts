@@ -12,6 +12,7 @@ import { clearInboxes, postInbox } from './inbox'
 import { log } from './log'
 import { paths } from './paths'
 import { readRemoteState, writeRemoteState } from './remoteState'
+import { isCapture } from './capture'
 import { notice, readFile, runClaude } from './revive'
 import { buildOverview, liveSessions } from './schedule'
 import { getSettings } from './settings'
@@ -280,7 +281,8 @@ async function processRequests(): Promise<void> {
 export function openMonitor(): string {
   const lang = getSettings().language
   const url = remoteView().url
-  if (url !== undefined) { void shell.openExternal(url); return lang === 'ko' ? '원격 예약 작업 세션을 열었습니다. 휴대폰 Claude 앱 세션 목록에도 있습니다.' : 'Opened the remote jobs session; it is in the Claude mobile app too.' }
+  // capture mode opens no browser (the demo address is not real)
+  if (url !== undefined) { if (!isCapture()) void shell.openExternal(url); return lang === 'ko' ? '원격 예약 작업 세션을 열었습니다. 휴대폰 Claude 앱 세션 목록에도 있습니다.' : 'Opened the remote jobs session; it is in the Claude mobile app too.' }
   openWhenReady = true
   lastStartAt = 0
   kick?.()

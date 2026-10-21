@@ -4,6 +4,22 @@ One version for the plugin and the desktop app. `node scripts/version.js <x.y.z>
 `node scripts/version.js --check` verifies it. Each release is tagged `v<x.y.z>`.
 Versioning: **minor** for new features, **patch** for fixes only.
 
+## 0.14.0 (2026-10-21)
+
+- **Move the status bar by dragging anywhere but its buttons**, not only the grip (⋮⋮). A drag starts after 4 px, so a click still clicks; the hover tooltips and the right-click menu keep working.
+- **Hide the status bar from its right-click menu.** It stays hidden until the clock-out tray icon is clicked; a notice says where that icon is.
+- **New-version notice.** Once a day the app reads the latest release number from GitHub and shows a notice when it is newer; clicking it opens the release page. Nothing is downloaded or installed. Settings › Display can turn it off.
+- **Reset times read 10/24(Sat) 05:00** (month/day, weekday, 24-hour) in the usage tooltips.
+- **Usage after a PC start or a wake from sleep**: a failed fetch (for example 401 before the login token is refreshed) is tried once more after 1 minute instead of waiting 5 minutes, and the usage is fetched 10 seconds after the PC wakes.
+
+## 0.13.1 (2026-10-21)
+
+- **Fixed: right-click and the reset-time tooltip worked only on part of the status bar.** The usage and next-job cells sat in the window's drag region, which takes no hover or right-click (measured with WM_NCHITTEST: 30–800 px of the bar answered HTCAPTION). The info row is now a normal area; drag the bar by the grip (⋮⋮) at its left end.
+- **The status bar says whether remote monitoring is on**, in words with a phone icon (Remote on / starting / address pending / error) rather than a colour only; click it to open the session. Nothing is shown while the setting is off.
+- **Wording that did not match what the app does**: the work-end wake skips jobs set to No auto-wake and blocked or warned sessions (it said "every stopped session"); bypass still stops the blocked tools (it said "any command"); the usage server's limit is an observed value, not a published rule.
+- **Development: isolated captures.** `npm run capture` builds the app and captures its windows from a fresh fake folder. In capture mode the app sends no usage request, runs no `claude`, opens no browser, leaves the Windows autostart entry and the shared usage cache alone, and refuses to start without a fake `CLAUDE_CONFIG_DIR`. `scripts/shot.ps1`, which read the real config folder, is removed.
+- Tests: app 101 → 105.
+
 ## 0.13.0 (2026-10-20)
 
 Reliability and safety work after an external review of 0.12.0 (71/100). Three issues it reproduced are fixed (F-01, F-07, F-08 below).

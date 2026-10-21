@@ -1,6 +1,6 @@
 {
   "name": "clock-out",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "description": "Claude Code plugin: keeps CronCreate schedules alive across session restarts",
   "author": "nias2734-wq",

@@ -6,6 +6,7 @@ import { app } from 'electron'
 
 import type { SetupCheck, SetupFix } from '@shared/types'
 
+import { captureFixture, isCapture } from './capture'
 import { log } from './log'
 import { paths } from './paths'
 
@@ -15,6 +16,16 @@ import { paths } from './paths'
 const STARTUP_DIR = join(process.env.APPDATA ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
 const LEGACY_SHORTCUTS = ['Claude 사용량 위젯.lnk', 'clock-out.lnk']   // v1 widget, the PowerShell service of the plugin
 const RECENT_MS = 10 * 60 * 1000
+// capture mode without capture/setup.json: every check passed
+const CAPTURE_CHECKS: SetupCheck[] = [
+  { key: 'cli', state: 'ok', detail: '2.1.304 (Claude Code)' },
+  { key: 'login', state: 'ok', detail: '.credentials.json' },
+  { key: 'plugin', state: 'ok', detail: 'clock-out@clock-out (user)' },
+  { key: 'records', state: 'ok', detail: '3' },
+  { key: 'sleep', state: 'ok', detail: 'AC: sleep never, hibernate never' },
+  { key: 'terminal', state: 'ok', detail: 'wt.exe' },
+  { key: 'conflict', state: 'ok', detail: '' },
+]
 
 function run(file: string, args: string[], timeoutMs = 60_000): Promise<{ code: number; out: string }> {
   return new Promise(res => {
@@ -79,6 +90,8 @@ async function legacyWidgetPids(): Promise<number[]> {
 }
 
 export async function checkSetup(): Promise<SetupCheck[]> {
+  // capture mode runs nothing on the PC (claude, powercfg, where): the list comes from capture/setup.json
+  if (isCapture()) return captureFixture<SetupCheck[]>(paths.configDir, 'setup') ?? CAPTURE_CHECKS
   const checks: SetupCheck[] = []
 
   // 1. Claude Code itself
@@ -134,6 +147,7 @@ export async function checkSetup(): Promise<SetupCheck[]> {
 
 export async function runFix(fix: SetupFix): Promise<{ ok: boolean; message: string }> {
   log(`FIX ${fix}`)
+  if (isCapture()) return { ok: false, message: 'capture mode: nothing changed' }
   if (fix === 'installPlugin') {
     const dir = bundledPluginDir()
     const ran = await run('claude', ['plugin', 'install', 'clock-out', '--marketplace', dir, '--scope', 'user', '-y'], 180_000)

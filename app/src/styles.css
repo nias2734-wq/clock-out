@@ -39,11 +39,13 @@ button { font: inherit; }
 /* ---- status bar ------------------------------------------------------------------------------------ */
 .strip { height: 32px; border: 1px solid var(--border); background: var(--bg); user-select: none; overflow: hidden; }
 /* natural width: the window is sized to this (StatusBar measures .strip-measure) */
-.strip-measure { display: inline-flex; align-items: center; height: 100%; width: max-content; min-width: 100%; padding: 0 4px 0 12px; gap: 8px; }
+.strip-measure { display: inline-flex; align-items: center; height: 100%; width: max-content; min-width: 100%; padding: 0 4px 0 6px; gap: 8px; }
 .root.expanded .strip-measure { width: 100%; }
 /* the info side may shrink (and clip) when space runs out; the buttons never do */
 .drag { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; height: 100%; overflow: hidden; -webkit-app-region: drag; }
-.drag-inner { display: inline-flex; align-items: center; gap: 12px; width: max-content; flex: none; }
+.drag-inner { display: inline-flex; align-items: center; gap: 12px; width: max-content; flex: none; -webkit-app-region: no-drag; }
+/* the handle that moves the bar (the info row is no-drag so its tooltips and right-click work) */
+.grip { display: inline-flex; align-items: center; flex: none; height: 100%; margin-right: 6px; color: var(--off); }
 .strip-actions { display: flex; align-items: center; gap: 2px; flex: none; padding-left: 6px; border-left: 1px solid var(--border); height: 20px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--off); flex: none; }
 .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.danger { background: var(--danger); }

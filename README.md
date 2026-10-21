@@ -41,7 +41,7 @@ So when you say "schedule this", Claude picks `CronCreate`, and the job silently
 ## Features
 
 - **Every session's jobs in one window** — the jobs each session created with `CronCreate` (Claude Code's in-session scheduling tool), grouped by session, with the real next run, days to the 7-day expiry, and the last result (✓/✗, duration, first line of the answer).
-- **Wakes stopped sessions** — 10 minutes before a job, a stopped session is started in the background (`claude --bg --resume <session id>`) and restores its jobs from its transcript. On work days, every stopped session that still has jobs is woken once, 5 minutes before work end.
+- **Wakes stopped sessions** — 10 minutes before a job, a stopped session is started in the background (`claude --bg --resume <session id>`) and restores its jobs from its transcript. On work days, every stopped session that still has jobs is woken once, 5 minutes before work end (not for jobs set to No auto-wake, not a blocked session).
 - **Renews before the 7-day expiry** — recurring jobs expire 7 days after they are created. 24 hours before, the session deletes and re-creates them itself; a stopped session is woken a day before for it.
 - **How a job runs: Quiet · Notify · Open on screen** — Quiet runs in the background with no notice; Notify (the default) shows a Windows notification when the job starts and when it waits for your answer (click it to open the session); Open on screen shows the session in a terminal window at the job time. Claude picks the mode when it creates the job (reminders and questions open on screen) and tells you in one line; you can also set it per session or change the default.
 - **Done · last 7 days** — fired one-shot jobs and the runs of the last 7 days stay in the panel, one line each. Sessions with nothing left are grouped at the bottom of the list.
@@ -135,7 +135,7 @@ This also clears the plugin's options (values changed in `/config`).
 
 ### Status bar
 
-Always on top, drag it anywhere.
+Always on top; drag it anywhere by the grip (⋮⋮) at its left end. While the remote jobs session is on, the bar says so in words (Remote on / starting / address pending / error); click it to open the session.
 
 ![status bar, dark](docs/screenshots/statusbar-dark.png)
 
@@ -233,7 +233,7 @@ Open it from the status bar's right-click menu or the jobs panel footer.
 
 - **Work hours and token resets** — start · lunch · end · work days (default 09:00–18:00, lunch 12:00–13:00, Mon–Fri). A 24-hour timeline draws the 5-hour windows, the resets, the pings (⚡) and your jobs, and colours the hours "no effect / affects work / shares the limit".
 - **Reset times** — **Auto** (lunch end and 5 hours later: 13:00 and 18:00 by default, pings 08:05 and 13:05) or **Choose** whole hours. A reset less than 5 hours after the previous one cannot happen and is struck through.
-- **Reviving** — minutes before a job (10), hours before a recurring job expires (24), wake every stopped session 5 minutes before work end (on), confirm before waking, dry run (log only).
+- **Reviving** — minutes before a job (10), hours before a recurring job expires (24), wake stopped sessions that still have jobs 5 minutes before work end (on; not jobs with No auto-wake, not blocked sessions), confirm before waking, dry run (log only).
 - **Job run mode** — the default (Quiet · Notify · Open on screen) and *Clean up finished background sessions* after N idle minutes (on, 30).
 - **Permissions of a revived session** — see [Permissions and security](#permissions-and-security).
 - **Remote jobs session** — on/off, job result notices (off / failures only / every run), the session's permission.
@@ -253,10 +253,10 @@ On the status bar's right-click menu, or **Guide** in the jobs panel footer: the
 
 - **Revived sessions** run unattended, so permissions matter. The default is **work mode**: edits (`acceptEdits`) and an allowed-tools list (default `Bash(git *)`, `Bash(npm *)`, `Read`, `Edit`, `Write`, `Glob`, `Grep`) run without asking. **bypass** (`--dangerously-skip-permissions`, never asks) is turned on only through a warning ("I understand the risk, enable"), and shows a red pill on the status bar.
 - **Permissions are set on a session's first background start** and kept after that; a changed setting applies to sessions woken for the first time afterwards.
-- **The remote session** runs what you type on the phone on this PC. With bypass, every command from the phone runs without asking.
+- **The remote session** runs what you type on the phone on this PC. With bypass, every command from the phone that is not on the blocked list runs without asking.
 - **The installer is not code-signed**, hence the SmartScreen warning (More info → Run anyway).
 - **Login token** — the app reads Claude Code's OAuth token from `.credentials.json` **only for the usage query** (`api.anthropic.com/api/oauth/usage`). It never stores it elsewhere or writes it to `app.log`. The sign-in check only looks at whether a token exists.
-- **Network** — the usage query is the only request the app makes itself; pings, revivals and the remote session run the `claude` command, and Claude Code does the talking. No port, no auto-update, no telemetry. The plugin calls no network API.
+- **Network** — the app makes two requests itself: the usage query and the new-version check below; pings, revivals and the remote session run the `claude` command, and Claude Code does the talking. No port, no auto-update, no telemetry. The new-version notice (Settings, on by default) reads the latest release number from GitHub once a day; nothing is downloaded or installed. The plugin calls no network API.
 - **The first message sent to a revived session** is a fixed sentence in the app (check with CronList and re-create only the missing jobs); nothing from the record files is put into it.
 
 ## Where data lives
@@ -275,7 +275,7 @@ Everything is under `~/.claude/clock-out/`, or `<CLAUDE_CONFIG_DIR>/clock-out/` 
 | `app.log` | app log, one event per line | the app |
 | `config.json` | background service settings (copied from the plugin options) | the plugin |
 
-The usage answer is cached in the temp folder as `claude-usage-cache.json` (the usage server blocks for a while after more than 5 calls in 10 minutes).
+The usage answer is cached in the temp folder as `claude-usage-cache.json` (the usage server blocks for a while after too many calls; observed at about 5 in 10 minutes, not a published rule).
 
 ## Known limits
 
@@ -352,7 +352,7 @@ npm run dist                # installer → app/dist/clock-out-setup-<version>.e
 
 ### Capture mode
 
-After `npm run build`, run `npx electron .` with `CLOCKOUT_SHOT_DIR=<folder>`: the app saves its windows (status bar, jobs panel and its dialogs, settings, user guide, setup check) as PNG and quits, without waking anything. Point `CLAUDE_CONFIG_DIR` at a fake folder with demo session files to keep real session names out of the pictures.
+Run `npm run capture` in `app\` (options: `-- --out shots --theme dark --lang en --usage stale --remote on`): it builds the app, writes demo sessions into a fresh fake folder under `%TEMP%\clock-out-capture`, and the app saves its windows (status bar, jobs panel and its dialogs, settings, user guide, setup check) as PNG and quits. In this capture mode the app sends no usage request, runs no `claude`, leaves the Windows autostart entry alone, and refuses to start without a fake `CLAUDE_CONFIG_DIR`.
 
 ### Version
 
@@ -407,7 +407,7 @@ Claude Code 에서 세션이 꺼져도 도는 예약은 이미 있습니다. 그
 ### 무엇을 해 주나요
 
 - **모든 세션의 예약을 한 창에** — 각 세션이 건 예약(`CronCreate`, Claude Code 가 세션 안에서 예약을 거는 도구)을 세션별로 모아, 실제 다음 실행 시각·7일 만료까지 남은 날·마지막 실행 결과(✓/✗, 걸린 시간, 답 첫 줄)와 함께 보여 줍니다.
-- **꺼진 세션 깨우기** — 예약 10분 전에 그 세션이 꺼져 있으면 백그라운드로 다시 켭니다(`claude --bg --resume <세션 id>`). 다시 켜진 세션은 대화 기록에서 예약을 되살립니다. 근무 요일에는 퇴근 5분 전에 예약이 남은 꺼진 세션을 한 번에 켭니다.
+- **꺼진 세션 깨우기** — 예약 10분 전에 그 세션이 꺼져 있으면 백그라운드로 다시 켭니다(`claude --bg --resume <세션 id>`). 다시 켜진 세션은 대화 기록에서 예약을 되살립니다. 근무 요일에는 퇴근 5분 전에 예약이 남은 꺼진 세션을 한 번에 켭니다(자동 깨우기 제외 예약만 남은 세션과 깨우기가 차단된 세션은 빼고).
 - **7일 만료 전에 다시 걸기** — Claude Code 의 반복 예약은 건 지 7일이 지나면 사라집니다. 만료 24시간 전에 그 세션이 예약을 스스로 지우고 다시 겁니다. 세션이 꺼져 있으면 만료 하루 전에 깨워서 하게 합니다.
 - **예약 실행 방식: 조용히 · 알림 · 화면에 열기** — 조용히는 백그라운드로만 실행하고, 알림(기본값)은 시작할 때와 답을 기다릴 때 Windows 알림을 띄우며(누르면 그 세션이 열림), 화면에 열기는 예약 시각에 그 세션을 터미널 창으로 띄웁니다. Claude 가 예약을 만들 때 내용을 보고 정해 한 줄로 알려 주고(리마인더·질문은 화면에 열기), 세션별로 고르거나 기본값을 바꿀 수 있습니다.
 - **완료 · 최근 7일** — 실행된 1회 예약과 최근 7일의 실행 기록이 한 줄씩 예약 창에 남습니다. 남은 예약 없이 이 기록만 있는 세션은 목록 맨 아래에 묶입니다.
@@ -501,7 +501,7 @@ claude plugin marketplace remove clock-out
 
 #### 상태바
 
-화면 위에 항상 떠 있는 한 줄입니다. 끌어서 원하는 곳에 둡니다.
+화면 위에 항상 떠 있는 한 줄입니다. 왼쪽 끝 손잡이(⋮⋮)를 끌어서 원하는 곳에 둡니다. 원격 예약 작업 세션이 켜져 있으면 "원격 켜짐 / 시작 중 / 주소 준비 중 / 오류" 를 글자로 보여 주고, 누르면 그 세션을 엽니다.
 
 - **5시간 · 주간 · 모델별 주간(예: Fable)** 사용량 막대와 초기화까지 남은 시간. 초기화 시각은 마우스를 올리면 보입니다. 80% 넘으면 빨강, 50% 넘으면 주황입니다. 5시간 초기화 시각이 설정한 근무 리듬과 어긋나면 남은 시간이 주황으로 보입니다.
 - **다음** — 가장 가까운 예약 시각과 그 세션 이름.
@@ -599,7 +599,7 @@ claude plugin marketplace remove clock-out
 
 - **근무시간과 토큰 초기화** — 출근 · 점심 · 퇴근 · 근무 요일(기본 09:00–18:00, 점심 12:00–13:00, 월–금). 아래 24시간 타임라인에 5시간 창, 초기화 시각, 핑(⚡), 예약이 그려지고, 시간대가 "영향 없음 / 근무에 영향 / 업무와 한도 공유" 로 칠해집니다.
 - **초기화 시각** — **자동**(점심 끝과 그 5시간 뒤, 기본값이면 13:00 · 18:00, 핑 08:05 · 13:05) 또는 **직접 지정**(정시를 골라 추가). 앞 초기화 뒤 5시간이 안 되는 시각은 일어날 수 없어서 빨간 취소선으로 표시됩니다.
-- **되살리기** — 예약 몇 분 전에 깨울지(10), 반복 예약 만료 몇 시간 전에 깨울지(24), 퇴근 5분 전에 꺼진 세션 모두 깨우기(켜짐), 깨우기 전에 확인, 시험 모드(로그만 남김).
+- **되살리기** — 예약 몇 분 전에 깨울지(10), 반복 예약 만료 몇 시간 전에 깨울지(24), 퇴근 5분 전에 예약이 남은 꺼진 세션 깨우기(켜짐, 자동 깨우기 제외·깨우기 차단 세션은 빼고), 깨우기 전에 확인, 시험 모드(로그만 남김).
 - **예약 실행 방식** — 기본값(조용히 · 알림 · 화면에 열기)과 완료된 백그라운드 세션 자동 정리(켜짐, 쉰 지 30분 뒤).
 - **되살린 세션의 권한** — 아래 "권한과 보안" 참고.
 - **원격 예약 작업 세션** — 켜기, 예약 결과 알림(끔 / 실패만 / 모든 실행), 이 세션의 권한.
@@ -619,10 +619,10 @@ claude plugin marketplace remove clock-out
 
 - **되살린 세션의 권한** — 사람이 없는 동안 켜진 세션이므로 권한이 중요합니다. 기본은 **작업 가능 모드** 입니다: 파일 수정(`acceptEdits`)과 허용 도구 목록(기본 `Bash(git *)`, `Bash(npm *)`, `Read`, `Edit`, `Write`, `Glob`, `Grep`)은 묻지 않고 실행합니다. **bypass**(`--dangerously-skip-permissions`, 아무것도 묻지 않음)는 경고 창에서 "위험을 이해하고 켭니다" 를 눌러야 켜지고, 켜지면 상태바에 빨간 표시가 붙습니다.
 - **권한은 처음 백그라운드로 켤 때 정해집니다.** 한 번 백그라운드로 돈 세션은 그때의 권한을 기억합니다. 설정을 바꾸면 다음에 처음 깨우는 세션부터 적용됩니다.
-- **원격 세션** — 휴대폰에서 보낸 말이 이 PC 에서 실행됩니다. 원격 세션에 bypass 를 주면 휴대폰에서 보낸 말로 이 PC 의 모든 명령이 확인 없이 실행됩니다.
+- **원격 세션** — 휴대폰에서 보낸 말이 이 PC 에서 실행됩니다. 원격 세션에 bypass 를 주면 휴대폰에서 보낸 말로 이 PC 에서 차단 도구에 없는 명령이 확인 없이 실행됩니다.
 - **설치 파일 서명** — 설치 파일에 코드 서명이 없습니다. 그래서 SmartScreen 경고가 뜹니다(추가 정보 → 실행).
 - **로그인 토큰** — 앱은 Claude Code 가 저장한 로그인 토큰(`.credentials.json` 의 OAuth 토큰)을 **사용량 조회에만** 씁니다(`api.anthropic.com/api/oauth/usage`). 토큰을 따로 저장하거나 로그(`app.log`)에 남기지 않습니다. 로그인 여부 점검은 토큰이 있는지만 봅니다.
-- **네트워크** — 앱이 직접 보내는 요청은 사용량 조회 하나입니다. 핑·되살리기·원격 세션은 모두 `claude` 명령을 실행하는 것이고, 통신은 Claude Code 가 합니다. 앱은 포트를 열지 않고, 자동 업데이트·원격 전송이 없습니다. 플러그인은 네트워크 API 를 부르지 않습니다.
+- **네트워크** — 앱이 직접 보내는 요청은 사용량 조회와 아래 새 버전 확인 두 가지입니다. 핑·되살리기·원격 세션은 모두 `claude` 명령을 실행하는 것이고, 통신은 Claude Code 가 합니다. 앱은 포트를 열지 않고, 자동 업데이트·원격 전송이 없습니다. 새 버전 알림(설정, 기본 켜짐)은 하루 한 번 GitHub 의 최신 릴리스 번호만 확인하고, 내려받거나 설치하지 않습니다. 플러그인은 네트워크 API 를 부르지 않습니다.
 - **되살릴 때 보내는 첫 메시지** 는 앱 안의 고정 문장입니다("CronList 로 확인하고 빠진 예약만 다시 걸어라"). 기록 파일의 내용을 끼워 넣지 않습니다.
 
 ### 데이터 위치
@@ -641,7 +641,7 @@ claude plugin marketplace remove clock-out
 | `app.log` | 앱 로그(한 줄에 한 사건) | 앱 |
 | `config.json` | 상주 서비스 설정(플러그인 옵션을 옮겨 적음) | 플러그인 |
 
-사용량 조회 결과는 임시 폴더의 `claude-usage-cache.json` 에 캐시합니다(사용량 서버가 10분에 5번 넘게 물으면 잠시 막기 때문).
+사용량 조회 결과는 임시 폴더의 `claude-usage-cache.json` 에 캐시합니다(사용량 서버가 짧은 시간에 여러 번 물으면 잠시 막기 때문. 관찰한 값으로 10분에 5번 안팎이고 공개된 규칙은 아닙니다).
 
 ### 알려진 제약
 
@@ -676,7 +676,7 @@ claude plugin marketplace remove clock-out
 - **CI** — `.github/workflows/ci.yml` 이 push 와 PR 마다 `windows-latest` 에서 위 단계와 `app/` 의 타입 검사·테스트·번들 빌드를 돌립니다. 기여 규칙은 [CONTRIBUTING.md](CONTRIBUTING.md), 보안 문제 신고는 [SECURITY.md](SECURITY.md) 에 있습니다.
 
 - **`app/shared/timeline.ts` 와 `hooks/timeline.ts` 는 바이트까지 같은 파일이어야 합니다.** 앱과 플러그인이 같은 계산으로 "근무에 영향을 주는 시간" 을 판단하기 때문입니다. 한쪽을 고치면 다른 쪽에 그대로 복사하세요. 다르면 앱 테스트가 실패합니다.
-- **화면 캡처 모드** — `npm run build` 뒤 환경 변수 `CLOCKOUT_SHOT_DIR=<폴더>` 를 주고 `npx electron .` 으로 실행하면, 앱이 창들(상태바, 예약 창과 그 확인 창들, 설정, 사용설명서, 연동 점검)을 PNG 로 저장하고 스스로 종료합니다. 이 모드에서는 세션을 깨우지 않습니다. 실제 세션 이름이 찍히지 않게 하려면 `CLAUDE_CONFIG_DIR` 을 가짜 폴더로 지정하고, 그 안에 시연용 세션 파일을 두세요.
+- **화면 캡처 모드** — `app\` 에서 `npm run capture` 를 실행합니다(옵션: `-- --out shots --theme dark --lang en --usage stale --remote on`). 앱을 빌드하고 `%TEMP%\clock-out-capture` 아래 새 가짜 폴더에 시연용 세션을 만든 뒤, 앱이 창들(상태바, 예약 창과 그 확인 창들, 설정, 사용설명서, 연동 점검)을 PNG 로 저장하고 스스로 종료합니다. 이 모드의 앱은 사용량 서버에 요청하지 않고, `claude` 를 실행하지 않고, Windows 자동 실행 등록을 건드리지 않으며, 가짜 `CLAUDE_CONFIG_DIR` 없이는 시작하지 않습니다.
 - **버전** — 플러그인과 앱은 버전 하나를 같이 씁니다. `node scripts/version.js x.y.z` 로 모든 파일의 버전을 맞추고, `node scripts/version.js --check` 는 파일끼리 다르거나 CHANGELOG.md 에 그 버전 절이 없으면 실패합니다.
 
 바뀐 내용은 [CHANGELOG.md](CHANGELOG.md), 개발 중 남긴 기록은 [docs/dev-notes/PROGRESS.md](docs/dev-notes/PROGRESS.md) 에 있습니다.

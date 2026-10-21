@@ -10,6 +10,7 @@ import type { SessionFile, SessionView } from '@shared/schedule'
 import type { AppSessionState } from '@shared/types'
 
 import { patchSession, sessionState } from './appState'
+import { captureFixture, isCapture } from './capture'
 import { log } from './log'
 import { paths } from './paths'
 import { getSettings } from './settings'
@@ -32,6 +33,11 @@ export function notice(text: string, kind: 'info' | 'warn' = 'info', desktop = t
 }
 
 export function runClaude(args: string[], cwd: string | undefined): Promise<{ code: number; output: string }> {
+  // capture mode runs no claude: `claude agents` answers from capture/agents.json, anything else fails
+  if (isCapture()) {
+    const agents = args[0] === 'agents' ? captureFixture<unknown[]>(paths.configDir, 'agents') ?? [] : undefined
+    return Promise.resolve(agents !== undefined ? { code: 0, output: JSON.stringify(agents) } : { code: 1, output: `capture mode: claude ${args[0] ?? ''} not run` })
+  }
   return new Promise(resolve => {
     execFile('claude', args, { cwd: cwd !== undefined && cwd !== '' ? cwd : undefined, windowsHide: true, timeout: RUN_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code = err === null ? 0 : typeof (err as NodeJS.ErrnoException & { code?: number | string }).code === 'number' ? Number((err as { code?: number }).code) : 1

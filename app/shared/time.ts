@@ -30,6 +30,14 @@ export function formatRemaining(untilMs: number, nowMs: number): string {
   return `${m}m`
 }
 
+// A date and time as 'mm/dd(요일) HH:mm' in 24-hour time: ko 10/24(토) 05:00, en 10/24(Sat) 05:00
+export function formatDayTime(ms: number, lang: 'ko' | 'en'): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  const day = (lang === 'ko' ? ['일', '월', '화', '수', '목', '금', '토'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])[d.getDay()]
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())}(${day}) ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
 // The align-ping plan and the day simulation live in timeline.ts.
 
 // Whether a reset time (epoch ms) sits on one of the planned boundaries: within 3 minutes of the full hour

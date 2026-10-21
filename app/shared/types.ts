@@ -58,6 +58,7 @@ export type AppSettings = {
   language: 'ko' | 'en'
   theme: ThemeMode
   launchAtLogin: boolean
+  updateCheck: boolean   // once a day, asks GitHub for the latest release and shows a notice when it is newer
   onboardingDone: boolean
   statusBar: { x?: number; y?: number; expandedHeightRatio: number }
   workHours: WorkHours
@@ -83,6 +84,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'ko',
   theme: 'system',
   launchAtLogin: false,
+  updateCheck: true,
   onboardingDone: false,
   statusBar: { expandedHeightRatio: 0.6 },
   workHours: { start: '09:00', lunchStart: '12:00', lunchEnd: '13:00', end: '18:00', weekdays: [1, 2, 3, 4, 5] },
@@ -146,7 +148,8 @@ export type ClockOutApi = {
   openSettings: () => void
   onSettings: (listener: (s: AppSettings) => void) => () => void
   setStripWidth: (width: number) => void   // the bar sizes itself to its content
-  showStripMenu: () => void                // the bar's right-click menu (refresh, panel, remote monitor, settings, setup check, guide, quit)
+  showStripMenu: () => void                // the bar's right-click menu (refresh, panel, remote monitor, settings, setup check, guide, hide, quit)
+  dragStrip: (phase: 'start' | 'move' | 'end', dx?: number, dy?: number) => void   // moves the bar by the mouse travel since 'start'
   onboardingDone: () => void               // closes the first-run window and starts the app
   onUsage: (listener: (state: UsageState) => void) => () => void
 }

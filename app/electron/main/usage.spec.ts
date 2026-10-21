@@ -13,7 +13,7 @@ vi.mock('./paths', async () => {
 })
 
 import { paths } from './paths'
-import { fetchUsage, rowsOf } from './usage'
+import { fetchUsage, retryAfterFailure, rowsOf } from './usage'
 
 describe('rowsOf', () => {
   it('reads five_hour, seven_day and every per-model weekly limit from limits[]', () => {
@@ -83,5 +83,31 @@ describe('fetchUsage failures', () => {
     const state = await fetchUsage(true)
     expect(state.isWaiting).toBe(true)
     expect(state.isStale).toBe(true)
+  })
+})
+
+// capture mode (CLOCKOUT_SHOT_DIR): the numbers come from the cache only, the server is never asked
+describe('fetchUsage in capture mode', () => {
+  afterEach(() => { delete process.env.CLOCKOUT_SHOT_DIR; vi.unstubAllGlobals() })
+
+  it('shows an old cache as stale without a request', async () => {
+    process.env.CLOCKOUT_SHOT_DIR = 'shots'
+    writeFileSync(paths.usageCache, JSON.stringify({ fetchedAt: '2026-10-20T09:00:00', res: { five_hour: { utilization: 12 } } }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const state = await fetchUsage(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(state).toMatchObject({ isStale: true, isWaiting: false })
+    expect(state.rows.map(r => r.key)).toEqual(['five_hour'])
+  })
+})
+
+describe('retryAfterFailure', () => {
+  it('tries once more after a failed fetch, never after a 429 wait or a retry', () => {
+    const failed = { rows: [], status: 'status 401', isWaiting: false, isStale: true }
+    expect(retryAfterFailure(failed, false)).toBe(true)
+    expect(retryAfterFailure(failed, true)).toBe(false)
+    expect(retryAfterFailure({ ...failed, status: 'waiting until 09:12', isWaiting: true }, false)).toBe(false)
+    expect(retryAfterFailure({ rows: [], status: '', isWaiting: false, isStale: false }, false)).toBe(false)
   })
 })

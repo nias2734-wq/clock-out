@@ -56,6 +56,7 @@ const api: ClockOutApi = {
   },
   showStripMenu: () => ipcRenderer.send('strip:menu'),
   setStripWidth: width => { ipcRenderer.send('strip:width', width) },
+  dragStrip: (phase, dx, dy) => { ipcRenderer.send('strip:drag', phase, dx, dy) },
   onboardingDone: () => { ipcRenderer.send('onboarding:done') },
   onUsage: listener => {
     const handler = (_e: unknown, state: UsageState) => listener(state)

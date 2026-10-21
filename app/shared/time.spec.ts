@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatLocalStamp, formatRemaining, isAlignedReset, parseHm } from './time'
+import { formatDayTime, formatLocalStamp, formatRemaining, isAlignedReset, parseHm } from './time'
 
 describe('time helpers', () => {
   it('parseHm', () => { expect(parseHm('09:05')).toBe(545); expect(parseHm('24:00')).toBeNaN() })
@@ -14,6 +14,10 @@ describe('time helpers', () => {
     expect(isAlignedReset(new Date(2026, 9, 19, 13, 1).getTime(), [13, 18])).toBe(true)
     expect(isAlignedReset(new Date(2026, 9, 19, 12, 59).getTime(), [13, 18])).toBe(true)
     expect(isAlignedReset(new Date(2026, 9, 19, 13, 30).getTime(), [13, 18])).toBe(false)
+  })
+  it('formatDayTime writes mm/dd(day) HH:mm in 24-hour time', () => {
+    expect(formatDayTime(new Date(2026, 9, 24, 5, 0).getTime(), 'ko')).toBe('10/24(토) 05:00')
+    expect(formatDayTime(new Date(2026, 9, 21, 17, 59).getTime(), 'en')).toBe('10/21(Wed) 17:59')
   })
   it('formatLocalStamp writes local wall-clock time, not UTC', () => {
     const ms = new Date(2026, 9, 19, 17, 55, 3).getTime()

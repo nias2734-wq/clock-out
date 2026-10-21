@@ -111,6 +111,15 @@ export function remoteIsOn(remote: Pick<RemoteView, 'enabled' | 'isAlive'> | und
   return remote?.enabled === true && remote.isAlive
 }
 
+// What the status bar says about the remote jobs session while its setting is on (off: nothing is shown)
+//   on = runs with its claude.ai address · address = runs, the address not written yet · error = the last start failed · starting
+export type RemoteStage = 'on' | 'address' | 'starting' | 'error'
+export function remoteStage(remote: RemoteView | undefined): RemoteStage | undefined {
+  if (remote?.enabled !== true) return undefined
+  if (remote.isAlive) return remote.url !== undefined ? 'on' : 'address'
+  return remote.error !== undefined ? 'error' : 'starting'
+}
+
 export function shortId(id: string): string { return id.slice(0, 8) }
 export function labelOf(cwd: string): string {
   const parts = cwd.replace(/[\\/]+$/, '').split(/[\\/]/)

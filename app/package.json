@@ -1,7 +1,7 @@
 {
   "name": "clock-out-app",
   "productName": "clock-out",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Clock out. Your Claude Code schedules keep working. Desktop app: status bar, schedule list, session revival.",
   "main": "./out/main/index.js",
   "private": true,
@@ -22,6 +22,7 @@
     "preview": "electron-vite preview",
     "dist": "electron-vite build && electron-builder --win nsis",
     "test": "vitest run",
+    "capture": "electron-vite build && node scripts/capture.mjs",
     "icon": "node scripts/make-icon.js"
   },
   "dependencies": {

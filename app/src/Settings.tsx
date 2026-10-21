@@ -21,14 +21,14 @@ const L = {
     pingsAt: (p: string) => `정렬 핑 ${p} — 초기화 5시간 전에 보내 그 정시부터 창이 열리도록 시도합니다`,
     experimental: '실험 기능', pingNote: 'Anthropic 이 보장하는 동작이 아니라 관찰한 규칙에 기댑니다. 초기화 시각을 보장하지 않습니다.',
     model: '핑 모델', revive: '되살리기', lead: '예약 n분 전에 깨움', expiry: '반복 예약 만료 n시간 전에 깨움',
-    daily: '퇴근 5분 전에 꺼진 세션 모두 깨움', confirm: '깨우기 전에 확인(알림만 하고 직접 누름)', dryRun: '시험 모드: 로그만 남기고 실제로 깨우지 않음',
+    daily: '퇴근 5분 전에 예약이 남은 꺼진 세션 깨움(자동 깨우기 제외·깨우기 차단 세션은 빼고)', confirm: '깨우기 전에 확인(알림만 하고 직접 누름)', dryRun: '시험 모드: 로그만 남기고 실제로 깨우지 않음',
     permission: '되살린 세션의 권한', work_mode: '작업 가능 모드', work_desc: '파일 수정은 묻지 않고, 아래 허용 도구만 묻지 않고 실행합니다 (acceptEdits)',
-    bypass: 'bypass — 아무것도 묻지 않음', bypass_desc: '되살린 세션이 확인 없이 모든 파일을 고치고 모든 명령을 실행합니다',
-    bypassWarn: 'bypass 를 켜면 사람 없이 켜진 세션이 어떤 명령이든 확인 없이 실행합니다. 세션의 예약 프롬프트를 믿을 수 있을 때만 켜세요.',
+    bypass: 'bypass — 아무것도 묻지 않음', bypass_desc: '되살린 세션이 확인 없이 파일을 고치고 명령을 실행합니다. 아래 차단 도구만 막습니다',
+    bypassWarn: 'bypass 를 켜면 사람 없이 켜진 세션이 차단 도구에 없는 명령은 무엇이든 확인 없이 실행합니다. 세션의 예약 프롬프트를 믿을 수 있을 때만 켜세요.',
     bypassYes: '위험을 이해하고 켭니다', cancel: '취소', allowed: '허용 도구 (한 줄에 하나)', denied: '차단 도구 (한 줄에 하나, 허용 목록·bypass 보다 먼저 적용)',
     defaults: '권장 기본값으로', defaultsHint: 'push·publish·reset --hard 는 기본 차단합니다. 허용은 파일 읽기·수정과 git 조회·pull, 빌드·테스트만입니다.',
     savedOnce: '한 번 백그라운드로 돈 세션은 그때의 권한이 저장됩니다. 바꾼 설정은 다음에 처음 깨우는 세션부터 적용됩니다.',
-    display: '화면', theme: '테마', themeSystem: 'Windows 설정 따라가기', themeLight: '라이트', themeDark: '다크', language: '언어', launch: 'Windows 로그인 시 자동 실행', legacy: '플러그인 없이 돈 세션의 대화 기록도 읽기',
+    display: '화면', theme: '테마', themeSystem: 'Windows 설정 따라가기', themeLight: '라이트', themeDark: '다크', language: '언어', launch: 'Windows 로그인 시 자동 실행', updateCheck: '새 버전이 나오면 알림(하루 한 번 GitHub 확인)', legacy: '플러그인 없이 돈 세션의 대화 기록도 읽기',
     openGuide: '사용설명서 · 연동 점검 열기', guideHint: '설치 여부를 확인하고 버튼 하나로 설치합니다',
     plugin: '플러그인', pluginDesc: '세션 안에서 예약을 기록하고 만료를 스스로 연장하는 플러그인입니다.',
     close: '닫기',
@@ -36,7 +36,7 @@ const L = {
     remoteOn: '원격 예약 작업 세션 켜기', remoteAlive: '실행 중', remoteStarting: '시작하는 중…', remoteOpen: '휴대폰·웹에서 열기',
     remoteNotify: '예약 결과 알림', notifyOff: '끔', notifyFailures: '실패만', notifyAll: '모든 실행',
     remotePerm: '이 세션의 권한', remotePermNote: '휴대폰에서 보낸 말이 이 PC 에서 실행됩니다. 권한은 세션을 처음 시작할 때 정해지므로, 권한을 바꾸면 원격 예약 작업 세션을 새로 시작합니다(이전 대화는 이어지지 않습니다).',
-    remoteBypassWarn: '원격 세션에 bypass 를 주면 휴대폰에서 보낸 말로 이 PC 의 모든 명령이 확인 없이 실행됩니다.',
+    remoteBypassWarn: '원격 세션에 bypass 를 주면 휴대폰에서 보낸 말로 이 PC 에서 차단 도구에 없는 명령이 확인 없이 실행됩니다.',
     runMode: '예약 실행 방식', runModeWhy: '예약 시각에 그 예약을 어떻게 보여 줄지 정합니다. 예약에서 정한 방식(Claude 가 예약을 만들 때 정함) > 예약 창에서 세션별로 고른 방식 > 이 기본값 순서로 적용됩니다.',
     runModeDefault: '기본값', quiet: '조용히', notify: '알림', open: '화면에 열기',
     cleanupAuto: '완료된 백그라운드 세션 자동 정리', cleanupAfter: '쉰 지 n분 뒤',
@@ -51,14 +51,14 @@ const L = {
     pingsAt: (p: string) => `Align ping ${p} — sent 5 hours before each reset to try to open the window on that hour`,
     experimental: 'Experimental', pingNote: 'This relies on observed behaviour, not on anything Anthropic guarantees. The reset times are not guaranteed.',
     model: 'Ping model', revive: 'Reviving', lead: 'Wake a stopped session N minutes before its job', expiry: 'Wake N hours before a recurring job expires',
-    daily: 'Wake every stopped session 5 minutes before the work end', confirm: 'Ask before waking (notify only)', dryRun: 'Dry run: log only, never wake',
+    daily: 'Wake stopped sessions that still have jobs 5 minutes before the work end (not jobs with No auto-wake, not blocked sessions)', confirm: 'Ask before waking (notify only)', dryRun: 'Dry run: log only, never wake',
     permission: 'Permissions of a revived session', work_mode: 'Work mode', work_desc: 'Edits without asking, and the allowed tools below run without asking (acceptEdits)',
-    bypass: 'bypass — never ask', bypass_desc: 'A revived session edits any file and runs any command without confirmation',
-    bypassWarn: 'With bypass on, a session started without anyone watching runs any command unasked. Enable it only when you trust the prompts of every scheduled job.',
+    bypass: 'bypass — never ask', bypass_desc: 'A revived session edits files and runs commands without confirmation; only the blocked tools below are stopped',
+    bypassWarn: 'With bypass on, a session started without anyone watching runs any command not on the blocked list unasked. Enable it only when you trust the prompts of every scheduled job.',
     bypassYes: 'I understand the risk, enable', cancel: 'Cancel', allowed: 'Allowed tools (one per line)', denied: 'Blocked tools (one per line; win over the allowed list and bypass)',
     defaults: 'Recommended defaults', defaultsHint: 'push, publish and reset --hard are blocked by default. Allowed: reading and editing files, git status/diff/log/fetch/pull, build and test.',
     savedOnce: 'A session that ran in the background once keeps that permission; a changed setting applies to sessions woken for the first time from now on.',
-    display: 'Display', theme: 'Theme', themeSystem: 'Follow Windows', themeLight: 'Light', themeDark: 'Dark', language: 'Language', launch: 'Start with Windows', legacy: 'Also read transcripts of sessions that ran without the plugin',
+    display: 'Display', theme: 'Theme', themeSystem: 'Follow Windows', themeLight: 'Light', themeDark: 'Dark', language: 'Language', launch: 'Start with Windows', updateCheck: 'Tell me about a new version (checks GitHub once a day)', legacy: 'Also read transcripts of sessions that ran without the plugin',
     openGuide: 'Open user guide · setup check', guideHint: 'Checks the install and installs it with one button',
     plugin: 'Plugin', pluginDesc: 'The plugin records jobs inside each session and renews them before expiry.',
     close: 'Close',
@@ -66,7 +66,7 @@ const L = {
     remoteOn: 'Turn the remote jobs session on', remoteAlive: 'running', remoteStarting: 'starting…', remoteOpen: 'Open on phone / web',
     remoteNotify: 'Job result notices', notifyOff: 'Off', notifyFailures: 'Failures only', notifyAll: 'Every run',
     remotePerm: 'Permission of this session', remotePermNote: 'What you type on the phone runs on this PC. The permission is fixed when a session first starts, so changing it starts a new remote jobs session (the old conversation does not carry over).',
-    remoteBypassWarn: 'With bypass, anything typed on the phone runs any command on this PC without confirmation.',
+    remoteBypassWarn: 'With bypass, anything typed on the phone runs any command not on the blocked list on this PC without confirmation.',
     runMode: 'Job run mode', runModeWhy: 'How a job is shown when it fires. The mode set on the job (Claude picks it when it creates the job) comes first, then the one chosen per session in the jobs panel, then this default.',
     runModeDefault: 'Default', quiet: 'Quiet', notify: 'Notify', open: 'Open on screen',
     cleanupAuto: 'Clean up finished background sessions', cleanupAfter: 'after N idle minutes',
@@ -273,6 +273,7 @@ export function Settings({ initial, version }: { initial: AppSettings; version: 
           </label>
           <label className="check"><input type="checkbox" checked={s.launchAtLogin} onChange={e => save({ launchAtLogin: e.target.checked })} /> {l.launch}</label>
         </div>
+        <label className="check"><input type="checkbox" checked={s.updateCheck} onChange={e => save({ updateCheck: e.target.checked })} /> {l.updateCheck}</label>
         <label className="check"><input type="checkbox" checked={s.legacyTranscriptScan} onChange={e => save({ legacyTranscriptScan: e.target.checked })} /> {l.legacy}</label>
       </section>
 

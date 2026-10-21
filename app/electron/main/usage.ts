@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { formatLocalStamp } from '@shared/time'
 import type { UsageState, UsageWindow } from '@shared/types'
 
+import { isCapture } from './capture'
 import { log } from './log'
 import { paths } from './paths'
 
@@ -73,6 +74,12 @@ export function failureText(err: unknown): string {
 let last: UsageState = { rows: [], status: '', isWaiting: false }
 export function currentUsage(): UsageState { return last }
 
+// One more try 1 minute after a failed fetch (09:07 PC start: 401 until the token was refreshed, the bar empty for 5 minutes);
+// not after a 429 wait, not after a retry, not in capture mode
+export function retryAfterFailure(state: UsageState, wasRetry: boolean): boolean {
+  return state.isStale === true && !state.isWaiting && !wasRetry && !isCapture()
+}
+
 // force = the "refresh now" menu: ignores the 60 s freshness but still honours a 429 wait
 export async function fetchUsage(force = false, timeoutMs = FETCH_TIMEOUT_MS): Promise<UsageState> {
   const now = Date.now()
@@ -88,6 +95,11 @@ export async function fetchUsage(force = false, timeoutMs = FETCH_TIMEOUT_MS): P
   }
   if (!force && cache.fetchedAt !== undefined && now - Date.parse(cache.fetchedAt) < FRESH_MS) {
     last = { ...last, status: '', isWaiting: false, isStale: false }
+    return last
+  }
+  // capture mode never asks the server: an old cache shows as a failed fetch would (scripts/capture.mjs writes the cache)
+  if (isCapture()) {
+    last = { ...last, status: 'not logged in', isWaiting: false, isStale: true }
     return last
   }
   const abort = new AbortController()

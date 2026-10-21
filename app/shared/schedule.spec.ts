@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { dismissedWith, doneOf, jobsFromTranscript, liveTranscriptJobs, overviewOf, prunedCleared, remoteIsOn, sessionViewOf, validateSessionFile } from './schedule'
+import { dismissedWith, doneOf, jobsFromTranscript, liveTranscriptJobs, overviewOf, prunedCleared, remoteIsOn, remoteStage, sessionViewOf, validateSessionFile } from './schedule'
 import type { SessionFile } from './schedule'
 
 const NOW = new Date(2026, 9, 19, 10, 0).getTime()
@@ -127,6 +127,17 @@ describe('remoteIsOn', () => {
     expect(remoteIsOn({ enabled: true, isAlive: false })).toBe(false)    // starting or failed: the button starts it as before
     expect(remoteIsOn({ enabled: false, isAlive: true })).toBe(false)    // turned off, claude stop not through yet
     expect(remoteIsOn(undefined)).toBe(false)
+  })
+})
+
+describe('remoteStage', () => {
+  it('names each state in words (nothing while the setting is off)', () => {
+    expect(remoteStage(undefined)).toBeUndefined()
+    expect(remoteStage({ enabled: false, isAlive: true, url: 'https://claude.ai/code/x' })).toBeUndefined()
+    expect(remoteStage({ enabled: true, isAlive: true, url: 'https://claude.ai/code/x' })).toBe('on')
+    expect(remoteStage({ enabled: true, isAlive: true })).toBe('address')
+    expect(remoteStage({ enabled: true, isAlive: false })).toBe('starting')
+    expect(remoteStage({ enabled: true, isAlive: false, error: 'claude --bg failed' })).toBe('error')
   })
 })
 

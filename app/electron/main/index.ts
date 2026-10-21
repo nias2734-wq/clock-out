@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 import { BrowserWindow, Menu, Tray, app, clipboard, ipcMain, nativeImage, nativeTheme, powerMonitor, screen, shell } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
@@ -7,6 +8,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { remoteIsOn } from '@shared/schedule'
 import type { AppSettings, SetupFix } from '@shared/types'
 
+import { SHOT_DIR } from './capture'
 import { log } from './log'
 import { paths } from './paths'
 import { pingTick } from './ping'
@@ -21,7 +23,8 @@ import { autoCleanup, clearSession, stopCheck, stopIfDone, tidyDone } from './cl
 import { buildOverview, currentOverview, setRemoteProvider, setRemoteSessionProvider, toggleHide, watchSchedule } from './schedule'
 import { getSettings, setSettings } from './settings'
 import { bundledPluginDir, checkSetup, runFix } from './setup'
-import { currentUsage, fetchUsage } from './usage'
+import { startUpdateCheck } from './updates'
+import { currentUsage, fetchUsage, retryAfterFailure } from './usage'
 
 // clock-out desktop: a slim always-on-top status bar (usage, next job, schedule button) with a tray icon.
 // Phase A: tray, status bar window, usage, settings store, first-run notice. Schedule list and revival follow.
@@ -31,7 +34,8 @@ const PANEL_WIDTH = 1000      // the jobs panel's width (narrower screens: the w
 const PANEL_GAP = 4           // space between the bar and the panel under it
 const STRIP_WIDTH = 720   // first size; the renderer then asks for its content width (strip:width)
 const USAGE_INTERVAL_MS = 5 * 60 * 1000
-const SHOT_DIR = process.env.CLOCKOUT_SHOT_DIR   // dev: capture each window to this folder, then quit
+const USAGE_RETRY_MS = 60_000          // one more try after a failed fetch
+const USAGE_RESUME_DELAY_MS = 10_000   // after a wake from sleep
 
 let tray: Tray | undefined
 let strip: BrowserWindow | undefined
@@ -183,15 +187,32 @@ function createStrip(): BrowserWindow {
   win.setMenu(null)
   win.setAlwaysOnTop(true, 'screen-saver')
   fitStripShape(win, STRIP_WIDTH)
-  win.on('moved', () => {
-    const [nx = 0, ny = 0] = win.getPosition()
-    setSettings({ statusBar: { ...getSettings().statusBar, x: nx, y: ny } })
-    // the panel follows the bar
-    const bounds = panelBounds()
-    if (panelWin !== undefined && !panelWin.isDestroyed() && bounds !== undefined) panelWin.setPosition(bounds.x, bounds.y)
-  })
+  // during a strip:drag the position is saved once at the end, not on every step
+  win.on('moved', () => { if (dragFrom === undefined) saveStripPosition(win) })
   loadView(win, 'strip')
   return win
+}
+
+// Stores where the bar is and moves the open panel under it
+function saveStripPosition(win: BrowserWindow): void {
+  const [nx = 0, ny = 0] = win.getPosition()
+  setSettings({ statusBar: { ...getSettings().statusBar, x: nx, y: ny } })
+  const bounds = panelBounds()
+  if (panelWin !== undefined && !panelWin.isDestroyed() && bounds !== undefined) panelWin.setPosition(bounds.x, bounds.y)
+}
+
+// Dragging the bar anywhere but its buttons (strip:drag): the window position when the drag started, then start + mouse travel
+let dragFrom: { x: number; y: number } | undefined
+function dragStrip(phase: string, dx: number, dy: number): void {
+  if (strip === undefined || strip.isDestroyed()) return
+  if (phase === 'start') { const [x = 0, y = 0] = strip.getPosition(); dragFrom = { x, y }; return }
+  if (dragFrom === undefined) return
+  if (phase === 'move' && Number.isFinite(dx) && Number.isFinite(dy)) {
+    strip.setPosition(Math.round(dragFrom.x + dx), Math.round(dragFrom.y + dy))
+    const bounds = panelBounds()
+    if (panelWin !== undefined && !panelWin.isDestroyed() && bounds !== undefined) panelWin.setPosition(bounds.x, bounds.y)
+  }
+  if (phase === 'end') { dragFrom = undefined; saveStripPosition(strip) }
 }
 
 // First run: say what this app does before it does anything. Resolves true when the person accepted.
@@ -220,9 +241,29 @@ function pushUsage(): void {
   broadcast('usage', currentUsage())
 }
 
+// The usage timer, the bar's first load and a wake from sleep: a failed fetch is tried once more after 1 minute
+let usageRetry: NodeJS.Timeout | undefined
+function refreshUsage(wasRetry = false): void {
+  void fetchUsage().then(state => {
+    pushUsage()
+    if (usageRetry !== undefined || !retryAfterFailure(state, wasRetry)) return
+    log('USAGE retry in 60s')
+    usageRetry = setTimeout(() => { usageRetry = undefined; refreshUsage(true) }, USAGE_RETRY_MS)
+  })
+}
+
 function toggleStrip(): void {
   if (strip === undefined) return
-  if (strip.isVisible()) strip.hide(); else strip.show()
+  if (strip.isVisible()) hideStrip(); else strip.show()
+}
+
+// Hides the bar (and the jobs panel under it) until the tray icon is clicked; the app keeps running
+function hideStrip(): void {
+  if (strip === undefined) return
+  setExpanded(false)
+  strip.hide()
+  const lang = getSettings().language
+  notice(lang === 'ko' ? '상태바를 숨겼습니다. 작업 표시줄 오른쪽 clock-out 아이콘(안 보이면 ^ 안)을 누르면 다시 보입니다.' : 'The bar is hidden. Click the clock-out icon at the right of the taskbar (under ^ if not shown) to bring it back.')
 }
 
 // "Monitor jobs remotely": turn the remote jobs session on (if off) and open it; the panel button and the bar's menu
@@ -249,7 +290,7 @@ function stopMonitor(): string {
 }
 
 // Items of the tray menu and the bar's right-click menu, in the settings language
-type MenuKey = 'refresh' | 'panel' | 'monitor' | 'monitorOpen' | 'monitorStop' | 'settings' | 'setup' | 'guide' | 'toggleStrip' | 'dataFolder' | 'log' | 'quit'
+type MenuKey = 'refresh' | 'panel' | 'monitor' | 'monitorOpen' | 'monitorStop' | 'settings' | 'setup' | 'guide' | 'toggleStrip' | 'hideStrip' | 'dataFolder' | 'log' | 'quit'
 const MENU_ITEMS: Record<MenuKey, { ko: string; en: string; click: () => void }> = {
   refresh: { ko: '사용량 새로고침', en: 'Refresh usage', click: () => { void fetchUsage(true).then(pushUsage) } },
   panel: { ko: '예약 창 열기', en: 'Open the jobs panel', click: () => setExpanded(true) },
@@ -261,12 +302,13 @@ const MENU_ITEMS: Record<MenuKey, { ko: string; en: string; click: () => void }>
   setup: { ko: '연동 점검', en: 'Setup check', click: openSetup },
   guide: { ko: '사용설명서', en: 'User guide', click: openGuide },
   toggleStrip: { ko: '상태바 보이기 / 숨기기', en: 'Show / hide status bar', click: toggleStrip },
+  hideStrip: { ko: '상태바 숨기기', en: 'Hide the status bar', click: hideStrip },
   dataFolder: { ko: '데이터 폴더 열기', en: 'Open data folder', click: () => { void shell.openPath(paths.root) } },
   log: { ko: '로그 열기', en: 'Open log', click: () => { void shell.openPath(paths.log) } },
   quit: { ko: '종료', en: 'Quit', click: () => app.quit() },
 }
 const TRAY_MENU: (MenuKey | '-')[] = ['refresh', 'toggleStrip', 'settings', 'setup', 'guide', '-', 'dataFolder', 'log', '-', 'quit']
-const STRIP_MENU: (MenuKey | '-')[] = ['refresh', 'panel', 'monitor', 'settings', 'setup', 'guide', '-', 'quit']
+const STRIP_MENU: (MenuKey | '-')[] = ['refresh', 'panel', 'monitor', 'settings', 'setup', 'guide', '-', 'hideStrip', 'quit']
 
 function menuOf(keys: (MenuKey | '-')[]): MenuItemConstructorOptions[] {
   const lang = getSettings().language
@@ -295,7 +337,7 @@ function registerIpc(): void {
     const before = getSettings()
     const next = setSettings(patch)
     onRemoteSettings(before, next)
-    app.setLoginItemSettings({ openAtLogin: next.launchAtLogin })
+    if (SHOT_DIR === undefined) app.setLoginItemSettings({ openAtLogin: next.launchAtLogin })
     if (patch.theme !== undefined) applyTheme()
     if (patch.language !== undefined) setTrayMenu()
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('settings', next)
@@ -366,6 +408,7 @@ function registerIpc(): void {
     const s = currentOverview().sessions.find(x => x.sessionId === sessionId)
     return s === undefined ? `no session ${String(sessionId).slice(0, 8)}` : openSession(s)
   })
+  ipcMain.on('strip:drag', (_e, phase: string, dx: number, dy: number) => dragStrip(phase, dx, dy))
   ipcMain.on('strip:width', (_e, width: number) => {
     if (strip === undefined || strip.isDestroyed() || !Number.isFinite(width)) return
     const area = screen.getPrimaryDisplay().workArea
@@ -381,8 +424,12 @@ if (SHOT_DIR !== undefined) app.setPath('userData', join(app.getPath('temp'), 'c
 // a capture window covered by other windows is not painted and captures as an empty image
 if (SHOT_DIR !== undefined) app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 
+// capture mode reads and writes the config folder: only a fake one (CLAUDE_CONFIG_DIR), never ~/.claude
+if (SHOT_DIR !== undefined && ((process.env.CLAUDE_CONFIG_DIR ?? '') === '' || resolve(paths.configDir).toLowerCase() === resolve(homedir(), '.claude').toLowerCase())) {
+  console.error('capture mode needs CLAUDE_CONFIG_DIR set to a fake folder (scripts/capture.mjs makes one)')
+  app.exit(2)
 // One instance: a second start just shows the status bar of the first
-if (!app.requestSingleInstanceLock()) {
+} else if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => { strip?.show(); strip?.focus() })
@@ -397,7 +444,7 @@ if (!app.requestSingleInstanceLock()) {
     createTray()
     strip = createStrip()
     strip.webContents.on('did-finish-load', () => {
-      void fetchUsage().then(pushUsage)
+      refreshUsage()
       if (SHOT_DIR !== undefined) void (async () => {
         const win = strip as BrowserWindow
         // selects the session whose row shows this text (the 0.13 captures use the fake folders nightly-build and report-bot)
@@ -406,6 +453,13 @@ if (!app.requestSingleInstanceLock()) {
         // the right-click menu is a native popup a capture does not see: its items go to the log
         log(`SHOT strip menu ${menuOf(STRIP_MENU).map(m => m.label ?? '—').join(' | ')}`)
         log(`SHOT strip titles ${String(await win.webContents.executeJavaScript("[...document.querySelectorAll('.strip .cell, .strip .dot')].map(c => c.title).join(' | ')"))}`)
+        // drag from the middle of the usage cells 60 px left and 20 px down through the renderer's input path, then back
+        const [bx = 0, by = 0] = win.getPosition()
+        win.webContents.sendInputEvent({ type: 'mouseDown', x: 200, y: 16, globalX: bx + 200, globalY: by + 16, button: 'left', clickCount: 1 })
+        for (let k = 1; k <= 6; k++) { win.webContents.sendInputEvent({ type: 'mouseMove', x: 200, y: 16, globalX: bx + 200 - 10 * k, globalY: by + 16 + Math.round(20 * k / 6), button: 'left' }); await sleep(50) }
+        win.webContents.sendInputEvent({ type: 'mouseUp', x: 200, y: 16, globalX: bx + 140, globalY: by + 36, button: 'left', clickCount: 1 }); await sleep(300)
+        log(`SHOT strip drag ${bx},${by} -> ${win.getPosition().join(',')}`)
+        win.setPosition(bx, by)
         win.webContents.send('command', 'expand'); await sleep(3500); if (panelWin !== undefined) await shot(panelWin, 'schedule')
         await shot(win, 'statusbar-open')
         if (panelWin !== undefined) {
@@ -502,13 +556,15 @@ if (!app.requestSingleInstanceLock()) {
         app.quit()
       })()
     })
-    setInterval(() => { void fetchUsage().then(pushUsage) }, USAGE_INTERVAL_MS)
+    setInterval(() => refreshUsage(), USAGE_INTERVAL_MS)
+    // the network needs a few seconds after a wake from sleep
+    powerMonitor.on('resume', () => { setTimeout(() => refreshUsage(), USAGE_RESUME_DELAY_MS) })
     setRemoteProvider(remoteView)   // before the first overview is built
     setRemoteSessionProvider(() => readRemoteState().sessionId)
     watchSchedule(o => { broadcast('schedule', o); checkRuns(o) }, 30_000)
     onNotice((text, kind) => broadcast('notice', text, kind))
     if (SHOT_DIR === undefined && process.env.CLOCKOUT_REVIVE === undefined) {
-      startScheduler(autoCleanup); startRemote(); startRunWatch(); setInterval(pingTick, 60_000); pingTick()
+      startScheduler(autoCleanup); startRemote(); startRunWatch(); setInterval(pingTick, 60_000); pingTick(); startUpdateCheck()
       // jobs that went by while the PC was off or asleep: one notice, nothing runs on its own (missed.ts)
       checkMissed('start')
       powerMonitor.on('resume', () => { try { checkMissed('resume'); broadcast('schedule', currentOverview()) } catch (err) { log(`MISSED error ${String(err)}`) } })
@@ -518,7 +574,8 @@ if (!app.requestSingleInstanceLock()) {
       const target = buildOverview().sessions.find(x => x.sessionId.startsWith(process.env.CLOCKOUT_REVIVE as string))
       void (target === undefined ? Promise.resolve({ ok: false, message: 'no such session' }) : wakeSession(target, 'dev')).then(r => { log(`DEVREVIVE ${r.message}`); app.quit() })
     }
-    app.setLoginItemSettings({ openAtLogin: getSettings().launchAtLogin })
+    // capture mode leaves the Windows autostart entry of the installed app alone
+    if (SHOT_DIR === undefined) app.setLoginItemSettings({ openAtLogin: getSettings().launchAtLogin })
   }).catch(err => { log(`START failed ${String(err)}`); app.quit() })
   app.on('window-all-closed', () => { /* tray app: stay alive without windows */ })
   app.on('before-quit', () => log(`EXIT pid=${process.pid}`))
