@@ -168,12 +168,12 @@ test('job_mode records the mode on the own job and answers in the app language',
   await $.tool.call({ tool: 'CronCreate', cron: '15 10 20 10 *', prompt: 'remind me', recurring: false })
 
   const ko = String((await call($, { tool: 'mcp__clock-out__job_mode', jobId: 'once0003', mode: 'open' })).result)
-  expect(ko).toContain('"화면에 열기"(open)')
+  expect(ko).toContain('화면에 열기(open)')
   expect(JSON.parse(files.get(FILE) ?? '{}').jobs[0].mode).toBe('open')
 
   files.set('/home/alice/.claude/clock-out/app-settings.json', JSON.stringify({ language: 'en' }))
   const en = String((await call($, { tool: 'mcp__clock-out__job_mode', jobId: 'once0003', mode: 'notify' })).result)
-  expect(en).toContain('"notify" (notify)')
+  expect(en).toContain('notify(notify)')
   expect(JSON.parse(files.get(FILE) ?? '{}').jobs[0].mode).toBe('notify')
 })
 
@@ -197,16 +197,46 @@ test('job_mode refuses an id this session does not have, and a mode outside the 
   expect(deleted).toContain('예약이 없습니다')   // a deleted job is not a live job
 })
 
-test('a 7-day renewal keeps the mode of the job it replaces and adds no job_mode line', async ($, on) => {
+test('job_mode records the title; leaving mode out keeps the mode it had', async ($, on) => {
+  const files = memoryFs(on)
+  session(on)
+  mock.clock(on)
+  on('tool.call', { tool: 'CronCreate' }, () => ({ result: { id: 'once0004', humanSchedule: 'x', recurring: false } }))
+  await $.tool.call({ tool: 'CronCreate', cron: '15 10 20 10 *', prompt: 'pull develop and build', recurring: false })
+  await call($, { tool: 'mcp__clock-out__job_mode', jobId: 'once0004', mode: 'notify' })
+  const said = String((await call($, { tool: 'mcp__clock-out__job_mode', jobId: 'once0004', title: '  develop   pull 후 빌드 ' })).result)
+  expect(said).toContain('제목 "develop pull 후 빌드"')
+  const job = JSON.parse(files.get(FILE) ?? '{}').jobs[0]
+  expect(job.title).toBe('develop pull 후 빌드')
+  expect(job.mode).toBe('notify')
+})
+
+test('a 7-day renewal keeps the title and mode of the job it replaces and adds no job_mode line', async ($, on) => {
   const files = memoryFs(on)
   session(on)
   mock.clock(on)
   files.set(FILE, JSON.stringify({
     version: 1, sessionId: SESSION, cwd: '/home/alice/proj', alive: true, dismissed: [], runs: [],
-    jobs: [{ id: 'old00001', cron: '3 21 * * *', prompt: 'nightly', recurring: true, createdAt: 1, mode: 'quiet', reregisterTriedAt: 5, deletedAt: 6 }],
+    jobs: [{ id: 'old00001', cron: '3 21 * * *', prompt: 'nightly', recurring: true, createdAt: 1, mode: 'quiet', title: '야간 동기화', reregisterTriedAt: 5, deletedAt: 6 }],
   }))
   on('tool.call', { tool: 'CronCreate' }, () => ({ result: { id: 'new00001', humanSchedule: 'x', recurring: true } }))
   const ran = await call($, { tool: 'CronCreate', cron: '3 21 * * *', prompt: 'nightly' })
   expect(ran.context ?? []).toEqual([])
-  expect(JSON.parse(files.get(FILE) ?? '{}').jobs.find((j: { id: string }) => j.id === 'new00001').mode).toBe('quiet')
+  const renewed = JSON.parse(files.get(FILE) ?? '{}').jobs.find((j: { id: string }) => j.id === 'new00001')
+  expect(renewed.mode).toBe('quiet')
+  expect(renewed.title).toBe('야간 동기화')
+})
+
+test('a renewal of a job made before titles keeps its mode and asks job_mode for a title', async ($, on) => {
+  const files = memoryFs(on)
+  session(on)
+  mock.clock(on)
+  files.set(FILE, JSON.stringify({
+    version: 1, sessionId: SESSION, cwd: '/home/alice/proj', alive: true, dismissed: [], runs: [],
+    jobs: [{ id: 'old00002', cron: '3 21 * * *', prompt: 'nightly', recurring: true, createdAt: 1, mode: 'quiet', reregisterTriedAt: 5, deletedAt: 6 }],
+  }))
+  on('tool.call', { tool: 'CronCreate' }, () => ({ result: { id: 'new00002', humanSchedule: 'x', recurring: true } }))
+  const ran = await call($, { tool: 'CronCreate', cron: '3 21 * * *', prompt: 'nightly' })
+  expect((ran.context ?? []).join(' ')).toContain('title')
+  expect(JSON.parse(files.get(FILE) ?? '{}').jobs.find((j: { id: string }) => j.id === 'new00002').mode).toBe('quiet')
 })

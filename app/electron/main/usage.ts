@@ -123,7 +123,9 @@ export async function fetchUsage(force = false, timeoutMs = FETCH_TIMEOUT_MS): P
     writeCache({ fetchedAt: formatLocalStamp(now, 'T'), res: body, backoffSec: 0 })
     const rows = rowsOf(body)
     last = { rows, fetchedAt: now, status: rows.length === 0 ? 'no usage data' : '', isWaiting: false, isStale: false }
-    log(`USAGE ok ${rows.map(r => `${r.key}=${r.percent}%`).join(' ')}`)
+    // 5시간 창은 초기화 시각(로컬 HH:mm)도 남김 | 정렬 핑이 맞았는지 로그로 비교하려고
+    const reset = (r: (typeof rows)[number]) => (r.key === 'five_hour' && r.resetsAt !== undefined ? `@${new Date(r.resetsAt).toTimeString().slice(0, 5)}` : '')
+    log(`USAGE ok ${rows.map(r => `${r.key}=${r.percent}%${reset(r)}`).join(' ')}`)
     return last
   } catch (err) {
     const message = failureText(err)

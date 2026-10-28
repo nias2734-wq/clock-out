@@ -9,6 +9,7 @@ export type AppSettingsFile = {
   workHours?: WorkHours & { weekdays?: number[] }
   alignPing?: { enabled?: boolean; resetHours?: number[] }
   remote?: { enabled?: boolean; notify?: 'off' | 'failures' | 'all' }
+  permission?: { disallowedTools?: string[] }   // 예약 실행 턴에서만 막는 명령   "Bash(git push*)"
 }
 
 export async function readAppSettings($: EngineInterface): Promise<AppSettingsFile | undefined> {

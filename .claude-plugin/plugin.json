@@ -1,6 +1,6 @@
 {
   "name": "clock-out",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Keeps CronCreate schedules alive: records every session's jobs, renews expiring ones, revives stopped sessions, and shows them all in /clock-out.",
   "author": {
     "name": "nias2734-wq",

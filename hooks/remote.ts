@@ -203,7 +203,7 @@ const runMark = (run: { reason: string; taskOutcome?: TaskOutcome }) => (outcome
 // sessions found only in transcripts (started before the plugin), which this plugin cannot see on its own; without a
 // fresh file the plugin's own list is used.
 const APP_OVERVIEW_FRESH_MS = 3 * 60_000
-type AppJob = { id: string; humanSchedule: string; prompt: string; nextAt?: number; isDismissed: boolean; lastRun?: { finishedAt: number; reason: string; taskOutcome?: TaskOutcome; durationMs: number; answerHead?: string } }
+type AppJob = { id: string; humanSchedule: string; prompt: string; title?: string; nextAt?: number; isDismissed: boolean; lastRun?: { finishedAt: number; reason: string; taskOutcome?: TaskOutcome; durationMs: number; answerHead?: string } }
 type AppSession = { sessionId: string; shortId: string; label: string; isAlive: boolean; source?: 'plugin' | 'transcript'; running?: { promptHead: string; firedAt: number }; remoteUrl?: string; remoteSince?: number; jobs: AppJob[] }
 type ListedSessions = { sessions: AppSession[]; jobCount: number; fromApp: boolean }
 
@@ -240,7 +240,7 @@ export async function statusText($: EngineInterface): Promise<string> {
       const last = j.lastRun === undefined ? '아직 실행 없음'
         : `마지막 ${runMark(j.lastRun)} ${fmtTime(j.lastRun.finishedAt, now)} (${durText(j.lastRun.durationMs)})${j.lastRun.answerHead ? ` "${j.lastRun.answerHead.slice(0, 80)}"` : ''}`
       lines.push(`  - [${j.id}] ${j.humanSchedule} · 다음 ${fmtTime(j.nextAt, now)} · ${last}${j.isDismissed ? ' · 숨김' : ''}`)
-      lines.push(`    ${j.prompt.replace(/\s+/g, ' ').slice(0, 100)}`)
+      lines.push(`    ${j.title !== undefined ? `${j.title} — ` : ''}${j.prompt.replace(/\s+/g, ' ').slice(0, 100)}`)
     }
   }
   return lines.join('\n')
@@ -347,12 +347,12 @@ export function registerRemote(on: On): void {
 }
 
 // For runs.ts: the line for a finished scheduled job, when the app's notify setting asks for it
-export async function noticeOfRun($: EngineInterface, run: { reason: string; taskOutcome?: TaskOutcome; durationMs: number; promptHead: string; answerHead: string; finishedAt: number }): Promise<string | undefined> {
+export async function noticeOfRun($: EngineInterface, run: { reason: string; taskOutcome?: TaskOutcome; durationMs: number; promptHead: string; answerHead: string; finishedAt: number; title?: string }): Promise<string | undefined> {
   const settings = await readAppSettings($)
   const notify = settings?.remote?.enabled === true ? (settings.remote.notify ?? 'failures') : 'off'
   // 'failures' sends failed runs only; 'all' sends the unverified answers too
   if (notify === 'off' || (notify === 'failures' && outcomeOf(run) !== 'failed')) return undefined
   const label = labelOf(await $.session.cwd())
   const short = (await $.session.id()).slice(0, 8)
-  return `${NOTICE_MARK} ${runMark(run)} ${fmtTime(run.finishedAt, run.finishedAt)} ${label} · ${short} · ${run.promptHead.slice(0, 50)} — ${run.reason} (${durText(run.durationMs)}): ${run.answerHead.slice(0, 80)}`
+  return `${NOTICE_MARK} ${runMark(run)} ${fmtTime(run.finishedAt, run.finishedAt)} ${label} · ${short} · ${run.title ?? run.promptHead.slice(0, 50)} — ${run.reason} (${durText(run.durationMs)}): ${run.answerHead.slice(0, 80)}`
 }

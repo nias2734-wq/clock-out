@@ -25,7 +25,7 @@ const L = {
     permission: '되살린 세션의 권한', work_mode: '작업 가능 모드', work_desc: '파일 수정은 묻지 않고, 아래 허용 도구만 묻지 않고 실행합니다 (acceptEdits)',
     bypass: 'bypass — 아무것도 묻지 않음', bypass_desc: '되살린 세션이 확인 없이 파일을 고치고 명령을 실행합니다. 아래 차단 도구만 막습니다',
     bypassWarn: 'bypass 를 켜면 사람 없이 켜진 세션이 차단 도구에 없는 명령은 무엇이든 확인 없이 실행합니다. 세션의 예약 프롬프트를 믿을 수 있을 때만 켜세요.',
-    bypassYes: '위험을 이해하고 켭니다', cancel: '취소', allowed: '허용 도구 (한 줄에 하나)', denied: '차단 도구 (한 줄에 하나, 허용 목록·bypass 보다 먼저 적용)',
+    bypassYes: '위험을 이해하고 켭니다', cancel: '취소', allowed: '허용 도구 (한 줄에 하나)', denied: '차단 도구 (한 줄에 하나, 예약 실행 중에만 적용 · 허용 목록·bypass 보다 먼저. git push 는 원격 세션이 켜져 있으면 원격에 승인을 물음)',
     defaults: '권장 기본값으로', defaultsHint: 'push·publish·reset --hard 는 기본 차단합니다. 허용은 파일 읽기·수정과 git 조회·pull, 빌드·테스트만입니다.',
     savedOnce: '한 번 백그라운드로 돈 세션은 그때의 권한이 저장됩니다. 바꾼 설정은 다음에 처음 깨우는 세션부터 적용됩니다.',
     display: '화면', theme: '테마', themeSystem: 'Windows 설정 따라가기', themeLight: '라이트', themeDark: '다크', language: '언어', launch: 'Windows 로그인 시 자동 실행', updateCheck: '새 버전이 나오면 알림(하루 한 번 GitHub 확인)', legacy: '플러그인 없이 돈 세션의 대화 기록도 읽기',
@@ -55,7 +55,7 @@ const L = {
     permission: 'Permissions of a revived session', work_mode: 'Work mode', work_desc: 'Edits without asking, and the allowed tools below run without asking (acceptEdits)',
     bypass: 'bypass — never ask', bypass_desc: 'A revived session edits files and runs commands without confirmation; only the blocked tools below are stopped',
     bypassWarn: 'With bypass on, a session started without anyone watching runs any command not on the blocked list unasked. Enable it only when you trust the prompts of every scheduled job.',
-    bypassYes: 'I understand the risk, enable', cancel: 'Cancel', allowed: 'Allowed tools (one per line)', denied: 'Blocked tools (one per line; win over the allowed list and bypass)',
+    bypassYes: 'I understand the risk, enable', cancel: 'Cancel', allowed: 'Allowed tools (one per line)', denied: 'Blocked tools (one per line; only while a scheduled job runs, over the allowed list and bypass. git push asks in the remote jobs session when it is on)',
     defaults: 'Recommended defaults', defaultsHint: 'push, publish and reset --hard are blocked by default. Allowed: reading and editing files, git status/diff/log/fetch/pull, build and test.',
     savedOnce: 'A session that ran in the background once keeps that permission; a changed setting applies to sessions woken for the first time from now on.',
     display: 'Display', theme: 'Theme', themeSystem: 'Follow Windows', themeLight: 'Light', themeDark: 'Dark', language: 'Language', launch: 'Start with Windows', updateCheck: 'Tell me about a new version (checks GitHub once a day)', legacy: 'Also read transcripts of sessions that ran without the plugin',
@@ -213,7 +213,7 @@ export function Settings({ initial, version }: { initial: AppSettings; version: 
           </div>
         )}
         {s.permission.mode === 'work' && <ToolList label={l.allowed} value={s.permission.allowedTools} onSave={allowedTools => save({ permission: { ...s.permission, allowedTools } })} />}
-        {/* --disallowedTools goes with bypass too (shared/revive.ts) */}
+        {/* bypass 에서도 적용 | 플래그가 아니라 플러그인이 예약 실행 턴에서만 거절(hooks/guard.ts) */}
         <ToolList label={l.denied} value={s.permission.disallowedTools} onSave={disallowedTools => save({ permission: { ...s.permission, disallowedTools } })} />
         <div className="row">
           <button className="btn secondary small" onClick={() => save({ permission: { ...s.permission, allowedTools: [...DEFAULT_SETTINGS.permission.allowedTools], disallowedTools: [...DEFAULT_SETTINGS.permission.disallowedTools] } })}><RotateCcw size={13} /> {l.defaults}</button>

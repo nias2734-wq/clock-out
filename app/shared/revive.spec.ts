@@ -19,12 +19,11 @@ function session(extra: Partial<SessionView> = {}): SessionView {
 }
 
 describe('reviveArgs', () => {
-  it('work mode on the first start: allowed and refused tools, then acceptEdits, then only the fixed message', () => {
+  it('work mode on the first start: allowed tools, then acceptEdits, then only the fixed message (no block list flag)', () => {
     const args = reviveArgs('s1', false, DEFAULT_SETTINGS.permission)
     expect(args).toEqual([
       '--bg', '--resume', 's1',
       '--allowedTools', DEFAULT_SETTINGS.permission.allowedTools.join(','),
-      '--disallowedTools', DEFAULT_SETTINGS.permission.disallowedTools.join(','),
       '--permission-mode', 'acceptEdits',
       REVIVE_MESSAGE,
     ])
@@ -42,8 +41,9 @@ describe('reviveArgs', () => {
       expect(lists.has(args[args.length - 3] ?? '')).toBe(false)   // the value before the message belongs to a one-value flag
     }
   })
-  it('bypass still passes the refused tools', () => {
-    expect(permissionArgs({ mode: 'bypass', allowedTools: ['Read'], disallowedTools: ['Bash(git push*)'] })).toEqual(['--disallowedTools', 'Bash(git push*)', '--dangerously-skip-permissions'])
+  it('the block list never goes into the flags: it would stay with the session and limit work done by hand', () => {
+    expect(permissionArgs({ mode: 'bypass', allowedTools: ['Read'], disallowedTools: ['Bash(git push*)'] })).toEqual(['--dangerously-skip-permissions'])
+    expect(permissionArgs({ mode: 'work', allowedTools: ['Read'], disallowedTools: ['Bash(git push*)'] })).toEqual(['--allowedTools', 'Read', '--permission-mode', 'acceptEdits'])
   })
   it('bypass mode on the first start passes the dangerous flag; a later wake passes no flags at all', () => {
     expect(reviveArgs('s1', false, { mode: 'bypass', allowedTools: [], disallowedTools: [] })).toEqual(['--bg', '--resume', 's1', '--dangerously-skip-permissions', REVIVE_MESSAGE])
@@ -103,10 +103,10 @@ describe('permissionDiffers', () => {
   it('same settings in another order: no mismatch', () => {
     expect(permissionDiffers(start, { ...DEFAULT_SETTINGS.permission, allowedTools: [...DEFAULT_SETTINGS.permission.allowedTools].reverse() })).toBe(false)
   })
-  it('a changed mode, allowed or refused list: mismatch', () => {
+  it('a changed mode or allowed list: mismatch; a changed block list is not (the plugin reads it at every run)', () => {
     expect(permissionDiffers(start, { ...DEFAULT_SETTINGS.permission, mode: 'bypass' })).toBe(true)
     expect(permissionDiffers(start, { ...DEFAULT_SETTINGS.permission, allowedTools: ['Read'] })).toBe(true)
-    expect(permissionDiffers(start, { ...DEFAULT_SETTINGS.permission, disallowedTools: [] })).toBe(true)
+    expect(permissionDiffers(start, { ...DEFAULT_SETTINGS.permission, disallowedTools: [] })).toBe(false)
   })
   it('bypass ignores the allowed list', () => {
     const bypass = permissionRecord({ ...DEFAULT_SETTINGS.permission, mode: 'bypass' }, 1)

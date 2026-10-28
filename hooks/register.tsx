@@ -2,6 +2,7 @@ import type { Register } from 'claude-code'
 
 import { startCommand, registerCommand } from './command'
 import { syncServiceConfig } from './config'
+import { registerGuard } from './guard'
 import { endSession, startHeartbeat } from './heartbeat'
 import { registerJobs, startJobModeTool } from './jobs'
 import { registerPane } from './pane'
@@ -32,6 +33,7 @@ export const register: Register = (on, options) => {
   })
   registerJobs(on)
   registerRuns(on)
+  registerGuard(on)
   registerRemote(on)
   registerCommand(on, expiryLeadMs)
   registerPane(on)

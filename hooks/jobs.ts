@@ -8,22 +8,24 @@ import { liveJobs, RUN_MODES, WEEK_MS } from './schema'
 import { checkZone } from './zoneGuard'
 import type { Job, Renewal, RunMode } from './schema'
 
-// job_mode: the model sets how the app shows a job when it fires (jobs[].mode). Every session gets it, unlike the
+// job_mode: the model names a job (jobs[].title) and sets how the app shows it when it fires (jobs[].mode). Every session gets it, unlike the
 // remote jobs session's tools (status / send / open_remote in remote.ts).
 export const JOB_MODE_TOOL = {
   name: 'job_mode',
-  description: 'clock-out: 예약의 실행 방식을 정한다. CronCreate 로 예약을 만든 직후 호출해 실행 방식을 정한다. ' +
-    '리마인더·사용자에게 질문하거나 결과를 직접 보여 줘야 하는 예약은 open(예약 시각에 그 세션을 터미널 창으로 띄움), ' +
+  description: 'clock-out: 예약의 제목과 실행 방식을 정한다. CronCreate 로 예약을 만든 직후 항상 호출한다. ' +
+    'title 은 알림·목록에 보일 짧은 제목(무슨 일인지 바로 알 수 있게, 20자 안팎, 예: "주간 보고 정리", "develop pull 후 빌드"). ' +
+    'mode: 리마인더·사용자에게 질문하거나 결과를 직접 보여 줘야 하는 예약은 open(예약 시각에 그 세션을 터미널 창으로 띄움), ' +
     '사용자가 실행 사실만 알면 되는 것은 notify(백그라운드로 실행하고 시작·답 대기 때 데스크톱 알림), ' +
-    '무인 작업은 호출하지 않아도 됨(앱 기본값). quiet(백그라운드로만 실행, 알림 없음)는 사용자가 원할 때 쓴다. ' +
-    '정한 방식을 사용자에게 한 줄로 알리고, 사용자가 바꾸라고 하면 다시 호출.',
+    '무인 작업은 생략(앱 기본값). quiet(백그라운드로만 실행, 알림 없음)는 사용자가 원할 때 쓴다. ' +
+    '정한 제목·방식을 사용자에게 한 줄로 알리고, 사용자가 바꾸라고 하면 다시 호출.',
   inputSchema: {
     type: 'object',
     properties: {
       jobId: { type: 'string', description: 'CronCreate 가 돌려준 예약 id' },
-      mode: { type: 'string', enum: [...RUN_MODES] },
+      title: { type: 'string', description: '알림·목록에 보일 짧은 제목' },
+      mode: { type: 'string', enum: [...RUN_MODES], description: '생략하면 앱 기본값' },
     },
-    required: ['jobId', 'mode'],
+    required: ['jobId', 'title'],
   },
 } as const
 
@@ -41,20 +43,27 @@ async function language($: EngineInterface): Promise<'ko' | 'en'> {
   return (await readAppSettings($))?.language === 'en' ? 'en' : 'ko'
 }
 
-// Records the mode on this session's own job. Returns the sentence the model reads.
-export async function setJobMode($: EngineInterface, jobId: string, mode: string): Promise<string> {
+const TITLE_MAX = 40   // 알림 제목 줄에 들어가는 길이
+
+// Records the title and mode on this session's own job. Returns the sentence the model reads.
+// mode '' = 바꾸지 않음(앱 기본값 또는 이전 값), title '' = 바꾸지 않음
+export async function setJobMode($: EngineInterface, jobId: string, mode: string, title = ''): Promise<string> {
   const lang = await language($)
-  if (!(RUN_MODES as readonly string[]).includes(mode)) {
+  const name = title.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX)
+  if (mode !== '' && !(RUN_MODES as readonly string[]).includes(mode)) {
     return lang === 'en' ? `clock-out: mode must be one of ${RUN_MODES.join(', ')}.` : `clock-out: mode 는 ${RUN_MODES.join(', ')} 중 하나여야 합니다.`
   }
-  const wanted = mode as RunMode
+  const wanted = mode === '' ? undefined : mode as RunMode
   let found = false
+  let applied: RunMode | undefined   // 기록 뒤 그 예약의 실행 방식   mode 를 빼면 이전 값 그대로
   let live: string[] = []
   await updateOwnSession($, file => {
     const job = liveJobs(file).find(j => j.id === jobId.trim())
     live = liveJobs(file).map(j => j.id)
     if (job === undefined) return
-    job.mode = wanted
+    if (wanted !== undefined) job.mode = wanted
+    if (name !== '') job.title = name
+    applied = job.mode
     found = true
   })
   if (!found) {
@@ -64,18 +73,19 @@ export async function setJobMode($: EngineInterface, jobId: string, mode: string
       : `clock-out: 이 세션에 "${jobId}" 예약이 없습니다(이 세션의 예약: ${ids}). 기록하지 않았습니다.`
   }
   await touchStamp($)
-  const label = MODE_LABEL[lang][wanted]
+  const label = applied === undefined ? (lang === 'en' ? 'app default' : '앱 기본값') : `${MODE_LABEL[lang][applied]}(${applied})`
+  const named = name === '' ? '' : (lang === 'en' ? ` titled "${name}"` : ` 제목 "${name}",`)
   return lang === 'en'
-    ? `clock-out: job ${jobId} will run as "${label}" (${wanted}). Tell the user in one line; call again if they want another mode.`
-    : `clock-out: 예약 ${jobId} 의 실행 방식을 "${label}"(${wanted}) 로 정했습니다. 사용자에게 한 줄로 알리고, 바꾸라고 하면 다시 부르세요.`
+    ? `clock-out: job ${jobId}${named} will run as ${label}. Tell the user in one line; call again if they want another title or mode.`
+    : `clock-out: 예약 ${jobId} 을${named} 실행 방식 ${label} 로 정했습니다. 사용자에게 한 줄로 알리고, 바꾸라고 하면 다시 부르세요.`
 }
 
-// The line added to a CronCreate result so the model remembers job_mode
+// The line added to a CronCreate result so the model remembers job_mode (title always, mode when it matters)
 async function modeHint($: EngineInterface, jobId: string): Promise<string> {
   const tool = `mcp__clock-out__${JOB_MODE_TOOL.name}`
   return (await language($)) === 'en'
-    ? `clock-out: decide how this job (jobId "${jobId}") runs. A reminder, a question to the user or a result the user must see → call ${tool} with mode "open"; the user only needs to know it ran → "notify"; unattended work → no call needed (the app's default). Tell the user the chosen mode in one line.`
-    : `clock-out: 이 예약(jobId "${jobId}")의 실행 방식을 정하세요. 리마인더·사용자에게 묻는 일·사용자가 결과를 직접 봐야 하는 예약이면 ${tool} 를 mode "open" 으로, 실행 사실만 알면 되면 "notify" 로 부르고, 무인 작업이면 부르지 않아도 됩니다(앱 기본값). 정한 방식을 사용자에게 한 줄로 알려 주세요.`
+    ? `clock-out: now call ${tool} for this job (jobId "${jobId}") with a short title the user will see in notices (what it does, about 20 characters). Add mode "open" for a reminder, a question to the user or a result the user must see; "notify" when the user only needs to know it ran; leave mode out for unattended work (the app's default). Tell the user the title and mode in one line.`
+    : `clock-out: 이 예약(jobId "${jobId}")에 ${tool} 를 지금 호출하세요. title 에는 알림에서 무슨 일인지 바로 알 수 있는 짧은 제목(20자 안팎)을 넣고, 리마인더·사용자에게 묻는 일·사용자가 결과를 직접 봐야 하는 예약이면 mode "open", 실행 사실만 알면 되면 "notify", 무인 작업이면 mode 를 빼세요(앱 기본값). 정한 제목과 방식을 사용자에게 한 줄로 알려 주세요.`
 }
 
 // The renewal (reregister.ts) this CronCreate re-creates: same cron and prompt, the old job already deleted
@@ -116,27 +126,28 @@ export function registerJobs(on: On): void {
       nextFireAt: r.nextFireAt,
     }
     if (r.recurring) job.expiresAt = now + WEEK_MS
-    let inherited = false
     await updateOwnSession($, file => {
       // 7일 만료 전 재등록(reregister.ts)이면 지워진 옛 예약의 실행 방식을 이어받는다
       const renewed = file.jobs.filter(j => j.mode !== undefined && j.reregisterTriedAt !== undefined && j.cron === job.cron && j.prompt.trim() === job.prompt.trim()).pop()
       const renewal = isRenewalOf(file.renewal, job.cron, job.prompt) ? file.renewal : undefined
       const mode = renewal?.mode ?? renewed?.mode
-      if (mode !== undefined) { job.mode = mode; inherited = true }
+      if (mode !== undefined) job.mode = mode
+      const titled = file.jobs.filter(j => j.title !== undefined && j.cron === job.cron && j.prompt.trim() === job.prompt.trim()).pop()
+      if (titled?.title !== undefined) job.title = titled.title   // 같은 예약을 다시 건 것: 제목은 이미 정해져 있음
       file.jobs = [...file.jobs.filter(j => j.id !== job.id), job]
       if (renewal !== undefined) delete file.renewal   // 갱신의 새 예약이 생겼으므로 갱신 기록을 지운다
     })
     await touchStamp($)
-    // 3. 모델에게 job_mode 로 실행 방식을 정하라고 한 줄 덧붙인다(사용자에게는 안 보임)
-    if (inherited) return ran
+    // 3. 모델에게 job_mode 로 제목·실행 방식을 정하라고 한 줄 덧붙인다(사용자에게는 안 보임)
+    if (job.title !== undefined) return ran
     const hint = await modeHint($, job.id)
     return { ...ran, context: [...(ran.context ?? []), hint] }
   }).catch((_$, e, next) => next(e))   // 기록 중 실패해도 도구 호출 결과는 그대로 흘려보낸다
 
   // the matcher takes built-in names or a pattern, so the plugin's own tool goes by a pattern (as in remote.ts)
   on('tool.call', { tool: /^mcp__clock-out__job_mode$/ }, async ($, e) => {
-    const input = e as unknown as { jobId?: unknown; mode?: unknown }
-    return { result: await setJobMode($, String(input.jobId ?? ''), String(input.mode ?? '')) }
+    const input = e as unknown as { jobId?: unknown; mode?: unknown; title?: unknown }
+    return { result: await setJobMode($, String(input.jobId ?? ''), String(input.mode ?? ''), String(input.title ?? '')) }
   }).catch((_$, e, next) => next(e))
 
   on('tool.call', { tool: 'CronDelete' }, async ($, e, next) => {

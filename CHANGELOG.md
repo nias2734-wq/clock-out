@@ -4,6 +4,13 @@ One version for the plugin and the desktop app. `node scripts/version.js <x.y.z>
 `node scripts/version.js --check` verifies it. Each release is tagged `v<x.y.z>`.
 Versioning: **minor** for new features, **patch** for fixes only.
 
+## 0.15.0 (2026-10-28)
+
+- **Blocked tools apply only while a scheduled job runs.** They were passed as `--disallowedTools` on a session's first background start, and the session kept the flag, so a `git push` you typed yourself in that session was refused too. The plugin now refuses them only in a turn started by a scheduled job. A `git push` there goes to the remote session as an approval request when remote is on (approve it there and the session pushes), and is refused otherwise. Sessions already started with the flag keep it.
+- **Fixed: the 5-hour usage reset came at about 10:30 instead of 13:00.** The remote session stops about every 12 hours and was restarted at once, around 05:34; its first turn opened the 5-hour window, so the 08:00 align ping could not. The remote session is no longer restarted inside the window that would shift the reset (with 09:00 work start: from about 04:00 until 09:00); it starts when that window ends, or at once from its open button. `USAGE` lines in `app.log` now show the 5-hour reset time (`five_hour=7%@13:00`).
+- **Job titles.** Claude gives each job a short title with `job_mode` right after `CronCreate` (the mode is now optional there). Notifications read "Job started: <title>" instead of the folder name, and `/clock-out`, the remote status, run notices and the timeline show it. A job renewed before its 7-day expiry keeps its title.
+- Tests: plugin 69 → 76, app 108 → 111.
+
 ## 0.14.0 (2026-10-21)
 
 - **Move the status bar by dragging anywhere but its buttons**, not only the grip (⋮⋮). A drag starts after 4 px, so a click still clicks; the hover tooltips and the right-click menu keep working.

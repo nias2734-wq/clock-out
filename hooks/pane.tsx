@@ -44,7 +44,7 @@ export function registerPane(on: On): void {
                   {j.isExpiringSoon && j.expiresInDays !== undefined ? ` · expires in ${j.expiresInDays}d` : ''}
                   {j.lastRun !== undefined ? ` · last ${j.lastRun.reason === 'answer' ? 'answered (unverified)' : j.lastRun.reason} ${fmtTime(j.lastRun.finishedAt, now)}` : ''}
                   {j.isDismissed ? ' · hidden' : ''}
-                  {width > 90 ? ` | ${j.prompt.replace(/\s+/g, ' ').slice(0, Math.max(10, width - 70))}` : ''}
+                  {width > 90 ? ` | ${j.title ?? j.prompt.replace(/\s+/g, ' ').slice(0, Math.max(10, width - 70))}` : ''}
                 </Text>
                 {!s.isAlive && (
                   <Button key={`hide-${j.id}`} plain label={j.isDismissed ? 'Unhide' : 'Hide'} onPress={() => { void toggleHide($, j.id) }} />

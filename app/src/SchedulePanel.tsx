@@ -288,7 +288,7 @@ export function SchedulePanel({ overview, settings, now, version, onMessage }: P
     | { step: 'stop'; s: SessionView; warns: StopWarn[] } | { step: 'clear'; s: SessionView; how: ClearHow; warns: StopWarn[]; why?: StopBlock }
     | { step: 'tidy'; rows: TidyRow[] } | { step: 'remote' }
   const [ask, setAsk] = useState<Ask | undefined>(undefined)
-  const jobText = (j: SessionView['jobs'][number]) => `[${j.id}] ${schedText(j)} · ${j.prompt.replace(/\s+/g, ' ').slice(0, 60)}`
+  const jobText = (j: SessionView['jobs'][number]) => `[${j.id}] ${schedText(j)} · ${j.title ?? j.prompt.replace(/\s+/g, ' ').slice(0, 60)}`
   const runDelete = async (sessionId: string, j: SessionView['jobs'][number]) => {
     setAsk({ step: 'busy', title: t(lang, 'deleting'), what: jobText(j) })
     const r = await api.deleteJob(sessionId, j.id)

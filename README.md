@@ -177,7 +177,7 @@ A job that fires in a background session shows nothing on screen, so each job ha
 - **Notify** (default) — runs in the background with a Windows notification when it starts and when it waits for your answer; click it to open the session in a terminal.
 - **Open on screen** — opens the session in a terminal window at the job time. Waking it beforehand still happens in the background.
 
-Order: the job's own mode → the mode chosen for the session in the jobs panel (the **Run mode** row under the session name) → the default in Settings. Claude sets the job's mode with the plugin's `job_mode` tool right after `CronCreate` and tells you in one line; say "make this job quiet" to change it. A job renewed before its 7-day expiry keeps its mode.
+Order: the job's own mode → the mode chosen for the session in the jobs panel (the **Run mode** row under the session name) → the default in Settings. Claude sets the job's short title and mode with the plugin's `job_mode` tool right after `CronCreate` and tells you in one line; say "make this job quiet" to change it. The title is what notifications, `/clock-out` and the remote notices show. A job renewed before its 7-day expiry keeps its title and mode.
 
 ![job run mode in Settings](docs/screenshots/settings-runmode.png)
 
@@ -256,7 +256,8 @@ On the status bar's right-click menu, or **Guide** in the jobs panel footer: the
 
 - **Revived sessions** run unattended, so permissions matter. The default is **work mode**: edits (`acceptEdits`) and an allowed-tools list (default `Bash(git *)`, `Bash(npm *)`, `Read`, `Edit`, `Write`, `Glob`, `Grep`) run without asking. **bypass** (`--dangerously-skip-permissions`, never asks) is turned on only through a warning ("I understand the risk, enable"), and shows a red pill on the status bar.
 - **Permissions are set on a session's first background start** and kept after that; a changed setting applies to sessions woken for the first time afterwards.
-- **The remote session** runs what you type on the phone on this PC. With bypass, every command from the phone that is not on the blocked list runs without asking.
+- **Blocked tools** (Settings) are refused only while a scheduled job runs; what you type yourself in the same session is not blocked. A `git push` during a scheduled run is sent to the remote session as an approval request when remote is on (approve it there and the session pushes), and refused otherwise.
+- **The remote session** runs what you type on the phone on this PC. With bypass, every command from the phone runs without asking.
 - **The installer is not code-signed**, hence the SmartScreen warning (More info → Run anyway).
 - **Login token** — the app reads Claude Code's OAuth token from `.credentials.json` **only for the usage query** (`api.anthropic.com/api/oauth/usage`). It never stores it elsewhere or writes it to `app.log`. The sign-in check only looks at whether a token exists.
 - **Network** — the app makes two requests itself: the usage query and the new-version check below; pings, revivals and the remote session run the `claude` command, and Claude Code does the talking. No port, no auto-update, no telemetry. The new-version notice (Settings, on by default) reads the latest release number from GitHub once a day; nothing is downloaded or installed. The plugin calls no network API.
@@ -549,7 +550,7 @@ claude plugin marketplace remove clock-out
 - **알림**(기본값) — 백그라운드로 실행하고, 시작할 때와 사용자 답을 기다릴 때 Windows 알림을 띄웁니다. 알림을 누르면 그 세션이 터미널 창으로 열립니다.
 - **화면에 열기** — 예약 시각에 그 세션을 터미널 창으로 띄워 바로 보여 줍니다. 미리 깨우는 것은 그대로 백그라운드로 합니다.
 
-적용 순서: 예약에서 정한 방식 → 예약 창에서 세션별로 고른 방식(세션 이름 아래 **실행 방식** 줄) → 설정의 기본값. Claude 가 `CronCreate` 직후 플러그인의 `job_mode` 도구로 예약의 방식을 정해 한 줄로 알려 주며, "이 예약은 조용히로 바꿔" 처럼 말하면 바꿉니다. 7일 만료 전에 다시 건 예약도 방식을 그대로 가집니다.
+적용 순서: 예약에서 정한 방식 → 예약 창에서 세션별로 고른 방식(세션 이름 아래 **실행 방식** 줄) → 설정의 기본값. Claude 가 `CronCreate` 직후 플러그인의 `job_mode` 도구로 예약의 짧은 제목과 방식을 정해 한 줄로 알려 주며, "이 예약은 조용히로 바꿔" 처럼 말하면 바꿉니다. 제목은 알림·`/clock-out`·원격 알림에 표시됩니다. 7일 만료 전에 다시 건 예약도 제목과 방식을 그대로 가집니다.
 
 ![설정의 예약 실행 방식](docs/screenshots/ko-settings-runmode.png)
 
@@ -625,7 +626,8 @@ claude plugin marketplace remove clock-out
 
 - **되살린 세션의 권한** — 사람이 없는 동안 켜진 세션이므로 권한이 중요합니다. 기본은 **작업 가능 모드** 입니다: 파일 수정(`acceptEdits`)과 허용 도구 목록(기본 `Bash(git *)`, `Bash(npm *)`, `Read`, `Edit`, `Write`, `Glob`, `Grep`)은 묻지 않고 실행합니다. **bypass**(`--dangerously-skip-permissions`, 아무것도 묻지 않음)는 경고 창에서 "위험을 이해하고 켭니다" 를 눌러야 켜지고, 켜지면 상태바에 빨간 표시가 붙습니다.
 - **권한은 처음 백그라운드로 켤 때 정해집니다.** 한 번 백그라운드로 돈 세션은 그때의 권한을 기억합니다. 설정을 바꾸면 다음에 처음 깨우는 세션부터 적용됩니다.
-- **원격 세션** — 휴대폰에서 보낸 말이 이 PC 에서 실행됩니다. 원격 세션에 bypass 를 주면 휴대폰에서 보낸 말로 이 PC 에서 차단 도구에 없는 명령이 확인 없이 실행됩니다.
+- **차단 도구**(설정) — 예약 실행 중에만 거절합니다. 같은 세션이라도 직접 입력한 작업은 막지 않습니다. 예약 실행 중 `git push` 는 원격이 켜져 있으면 원격 세션에 승인 요청으로 보내고(거기서 허락하면 그 세션이 push), 꺼져 있으면 거절합니다.
+- **원격 세션** — 휴대폰에서 보낸 말이 이 PC 에서 실행됩니다. 원격 세션에 bypass 를 주면 휴대폰에서 보낸 말로 이 PC 에서 모든 명령이 확인 없이 실행됩니다.
 - **설치 파일 서명** — 설치 파일에 코드 서명이 없습니다. 그래서 SmartScreen 경고가 뜹니다(추가 정보 → 실행).
 - **로그인 토큰** — 앱은 Claude Code 가 저장한 로그인 토큰(`.credentials.json` 의 OAuth 토큰)을 **사용량 조회에만** 씁니다(`api.anthropic.com/api/oauth/usage`). 토큰을 따로 저장하거나 로그(`app.log`)에 남기지 않습니다. 로그인 여부 점검은 토큰이 있는지만 봅니다.
 - **네트워크** — 앱이 직접 보내는 요청은 사용량 조회와 아래 새 버전 확인 두 가지입니다. 핑·되살리기·원격 세션은 모두 `claude` 명령을 실행하는 것이고, 통신은 Claude Code 가 합니다. 앱은 포트를 열지 않고, 자동 업데이트·원격 전송이 없습니다. 새 버전 알림(설정, 기본 켜짐)은 하루 한 번 GitHub 의 최신 릴리스 번호만 확인하고, 내려받거나 설치하지 않습니다. 플러그인은 네트워크 API 를 부르지 않습니다.

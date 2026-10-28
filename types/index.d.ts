@@ -6,6 +6,7 @@ export type ClockOutJobView = {
   cron: string
   humanSchedule: string
   prompt: string
+  title?: string             // short title the model gave with job_mode   "주간 보고 정리"
   recurring: boolean
   nextAt?: number            // epoch ms: nextFireAt from Claude Code when known, else computed from cron
   expiresAt?: number

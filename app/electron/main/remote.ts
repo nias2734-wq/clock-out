@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { shell } from 'electron'
 
-import { permissionArgs, resumedCopyIn } from '@shared/revive'
+import { permissionArgs, remoteHoldUntil, resumedCopyIn } from '@shared/revive'
 import type { RemoteView, SessionView } from '@shared/schedule'
 import type { AppSettings } from '@shared/types'
 
@@ -33,7 +33,7 @@ const STOP_WAIT_MS = 15_000            // a stopped session leaves the live reco
 const BRIDGE_WAIT_MS = 20_000          // a started session gets its Remote Control address within this
 const REQUEST_MAX_AGE_MS = 24 * 3_600_000
 const HALF_WRITTEN_MS = 30_000         // an unreadable request newer than this may still be being written: read it next time
-const GUIDE_VERSION = 1
+const GUIDE_VERSION = 2
 
 const NAME = { ko: '원격 예약 작업', en: 'Remote jobs' }
 const INTRO = {
@@ -50,6 +50,7 @@ const ORDER_TAIL = {
 let lastStartAt = 0
 let lastError: string | undefined
 let openWhenReady = false            // the monitor button was pressed before the session had its address
+let heldUntil: number | undefined    // 재시작을 미룬 끝 시각   로그를 한 번만 남기려고 기억
 let kick: (() => void) | undefined   // runs a tick now
 
 const notifyText = (n: AppSettings['remote']['notify'], lang: AppSettings['language']) =>
@@ -73,6 +74,7 @@ The clock-out app started this session. The user talks to it from the Claude mob
 ## Incoming messages
 - Starting with \`[clock-out 응답]\`: that session's answer to a forwarded instruction. Sum it up for the user.
 - Starting with \`[clock-out]\`: a finished job or something the app did. Send it with PushNotification as one line, then answer in one short line.
+- \`[clock-out] approval needed\`: a scheduled job wanted to git push and was stopped. Ask the user. Only when they allow it, forward "push now" with \`mcp__clock-out__send\` to that session; never push yourself.
 
 Notices: ${notify} (changed in the clock-out app).
 `
@@ -92,6 +94,7 @@ Notices: ${notify} (changed in the clock-out app).
 ## 들어오는 메시지
 - \`[clock-out 응답]\` 으로 시작: 전달한 지시에 대한 그 세션의 답입니다. 사용자에게 요약해 보여 줍니다.
 - \`[clock-out]\` 으로 시작: 예약 실행 결과나 앱이 한 일입니다. PushNotification 으로 한 줄 그대로 보내고, 답은 한 줄로 짧게 합니다.
+- \`[clock-out] 승인 요청\`: 예약 실행이 git push 를 하려다 멈췄습니다. 사용자에게 묻고, 허용할 때만 \`mcp__clock-out__send\` 로 그 세션에 "지금 push 해" 를 전달합니다. 이 세션이 직접 push 하지 않습니다.
 
 알림: ${notify} (clock-out 앱 설정에서 바꿉니다).
 `
@@ -138,7 +141,15 @@ async function ensureRemote(): Promise<void> {
   if (!settings.remote.enabled) return
   writeGuide(settings)
   const state = readRemoteState()
-  if (state.sessionId !== undefined && liveSessions().has(state.sessionId)) { lastError = undefined; return }
+  if (state.sessionId !== undefined && liveSessions().has(state.sessionId)) { lastError = undefined; heldUntil = undefined; return }
+  // 근무 영향 시간대에는 켜지 않고 그 끝까지 미룸 | 사용자가 열기 버튼을 누른 경우는 바로 켬
+  const hold = openWhenReady ? undefined : remoteHoldUntil(Date.now(), settings)
+  if (hold !== undefined) {
+    if (heldUntil !== hold) log(`REMOTE start held until ${new Date(hold).toTimeString().slice(0, 5)} (usage reset alignment)`)
+    heldUntil = hold
+    return
+  }
+  heldUntil = undefined
   if (Date.now() - lastStartAt < RETRY_MS) return
   lastStartAt = Date.now()
 

@@ -1,6 +1,7 @@
 // Pure decisions behind reviving a stopped session. The main process (electron/main/revive.ts) runs the commands.
 import type { SessionView } from './schedule'
 import { parseHm } from './time'
+import { planPings, planZones, rangesOf } from './timeline'
 import type { AppSettings, PermissionRecord } from './types'
 
 // The first message a woken session gets. Fixed text on purpose: nothing from a session file is ever put into
@@ -24,14 +25,14 @@ export function reviveArgs(sessionId: string, wasBackground: boolean, permission
   return args
 }
 
-// --allowedTools / --disallowedTools take several values (<tools...>): whatever follows them up to the next flag is read as
-// tool names, the first message too (measured 2026-10-20 with -p: `--allowedTools Read "msg"` lost the message). So the
-// two lists come first and the mode flag after them ends the lists.
+// --allowedTools takes several values (<tools...>): whatever follows it up to the next flag is read as tool names, the
+// first message too (measured 2026-10-20 with -p: `--allowedTools Read "msg"` lost the message). So the list comes first
+// and the mode flag after it ends the list.
+// 차단 목록(disallowedTools)은 넘기지 않음 | 플래그는 세션에 남아 사용자의 일반 작업까지 막으므로 플러그인(hooks/guard.ts)이 예약 실행 턴에서만 막음
 export function permissionArgs(permission: AppSettings['permission']): string[] {
-  const disallowed = permission.disallowedTools.length > 0 ? ['--disallowedTools', permission.disallowedTools.join(',')] : []
-  if (permission.mode === 'bypass') return [...disallowed, '--dangerously-skip-permissions']
+  if (permission.mode === 'bypass') return ['--dangerously-skip-permissions']
   const allowed = permission.allowedTools.length > 0 ? ['--allowedTools', permission.allowedTools.join(',')] : []
-  return [...allowed, ...disallowed, '--permission-mode', 'acceptEdits']
+  return [...allowed, '--permission-mode', 'acceptEdits']
 }
 
 export function permissionRecord(permission: AppSettings['permission'], at: number): PermissionRecord {
@@ -46,8 +47,8 @@ export function permissionDiffers(atStart: PermissionRecord, now: AppSettings['p
     return x.length === y.length && x.every((v, i) => v === y[i])
   }
   if (atStart.mode !== now.mode) return true
-  // bypass ignores the allowed list
-  return (now.mode !== 'bypass' && !same(atStart.allowedTools, now.allowedTools)) || !same(atStart.disallowedTools, now.disallowedTools)
+  // bypass ignores the allowed list; the block list is read by the plugin at every scheduled run, so it never differs
+  return now.mode !== 'bypass' && !same(atStart.allowedTools, now.allowedTools)
 }
 
 export type ReopenReason = { kind: 'due' | 'expiry' | 'daily'; text: string }
@@ -85,6 +86,19 @@ export function isPastDailyTime(now: number, settings: AppSettings): boolean {
   if (!settings.workHours.weekdays.includes(d.getDay())) return false
   const sweep = parseHm(dailySweepHm(settings))
   return d.getHours() * 60 + d.getMinutes() >= sweep
+}
+
+// 원격 예약 작업 세션을 다시 켜는 것을 미룰 시각(epoch ms) | 지금이 근무일의 근무 영향 시간대(앱 타임라인의 빨간 칸)면 그 끝, 아니면 undefined
+// 켤 때 보내는 메시지도 모델 턴이라 5시간 창을 연다   05:34 에 켜면 08:00 정렬 핑이 새 창을 못 열어 13:00 초기화가 10:34 로 당겨짐
+export function remoteHoldUntil(now: number, settings: AppSettings): number | undefined {
+  const d = new Date(now)
+  if (!settings.workHours.weekdays.includes(d.getDay())) return undefined
+  const zones = planZones(settings.workHours, planPings(settings.workHours, settings.alignPing.resetHours), settings.alignPing.enabled)
+  const minute = d.getHours() * 60 + d.getMinutes()
+  const range = rangesOf(zones, 'blocked').find(([a, b]) => (a < b ? minute >= a && minute < b : minute >= a || minute < b))
+  if (range === undefined) return undefined
+  const left = (((range[1] - minute) % 1440) + 1440) % 1440   // 자정을 넘는 시간대도 남은 분으로
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()).getTime() + left * 60_000
 }
 
 // "started a copy as <id>" in claude's output means flags were passed to a session with saved options

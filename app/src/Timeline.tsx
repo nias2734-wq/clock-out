@@ -95,7 +95,7 @@ function jobsOf(overview: Overview, todayStart: number): DayJob[] {
   const out: DayJob[] = []
   for (const s of overview.sessions) for (const j of s.jobs) {
     if (j.isDismissed) continue
-    out.push({ id: j.id, label: `${s.label} · ${j.prompt.replace(/\s+/g, ' ').slice(0, 40)}`, yesterday: occurrencesOn(j.cron, todayStart - DAY * 60_000), today: occurrencesOn(j.cron, todayStart) })
+    out.push({ id: j.id, label: `${s.label} · ${j.title ?? j.prompt.replace(/\s+/g, ' ').slice(0, 40)}`, yesterday: occurrencesOn(j.cron, todayStart - DAY * 60_000), today: occurrencesOn(j.cron, todayStart) })
   }
   return out
 }

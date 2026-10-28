@@ -22,6 +22,7 @@ export type Job = {
   goneAt?: number            // absent from CronList without a CronDelete (fired one-shot, 7-day expiry, or lost)
   reregisterTriedAt?: number // last automatic re-registration attempt
   mode?: RunMode             // set by the job_mode tool; absent = the app's per-session or default setting decides
+  title?: string             // job_mode 로 모델이 붙인 짧은 제목, 알림·목록에 표시   "주간 보고 정리"
 }
 
 // The turn ended with an answer (not a sign the work succeeded: no verifier yet) | it did not

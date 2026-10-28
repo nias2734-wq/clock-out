@@ -64,7 +64,7 @@ export type AppSettings = {
   workHours: WorkHours
   alignPing: { enabled: boolean; model: string; resetHours?: number[] }   // resetHours: chosen reset hours, absent = lunch end and 5 h later
   revive: { leadMinutes: number; expiryLeadHours: number; dailyAtEnd: boolean; confirmBefore: boolean; dryRun: boolean }
-  permission: { mode: PermissionMode; allowedTools: string[]; disallowedTools: string[] }   // disallowedTools: --disallowedTools, refused even when allowed
+  permission: { mode: PermissionMode; allowedTools: string[]; disallowedTools: string[] }   // disallowedTools: 플러그인(hooks/guard.ts)이 예약 실행 턴에서만 거절, 플래그로는 안 넘김
   legacyTranscriptScan: boolean
   remote: RemoteSettings
   runMode: { default: RunMode; sessions: Record<string, RunMode> }   // sessions: per-session choice from the jobs panel (sessionId → mode)

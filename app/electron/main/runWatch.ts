@@ -23,7 +23,12 @@ const shown = new Set<Notification>()   // a notice dropped by the garbage colle
 let active = false
 let checking = false
 
-function sessionName(s: SessionView): string { return s.name !== undefined && s.name !== '' ? s.name : s.label }
+// 알림 제목: 예약 제목 > 세션 이름 > 폴더 이름   폴더 이름만 쓰면 홈 폴더(C:\Users\<이름>)에서 건 예약이 모두 같은 이름으로 보임
+function sessionName(s: SessionView): string {
+  const title = runningJob(s)?.title
+  if (title !== undefined && title !== '') return title
+  return s.name !== undefined && s.name !== '' ? s.name : s.label
+}
 
 // A desktop notice; clicking it opens the session as it is then (attach, or resume when it has stopped)
 function show(title: string, body: string, sessionId: string): void {

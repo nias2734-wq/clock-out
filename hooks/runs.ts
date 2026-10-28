@@ -56,10 +56,14 @@ async function resyncCronList($: EngineInterface): Promise<void> {
   }
 }
 
+let scheduledTurn = false   // 지금 턴이 예약 발화로 시작됐는지   guard.ts 가 차단 목록을 이 턴에만 적용
+export const isScheduledTurn = (): boolean => scheduledTurn
+
 export function registerRuns(on: On): void {
   let pending: Pending | undefined
 
   on('prompt.submit', async ($, e, next) => {
+    scheduledTurn = e.origin.kind === 'scheduled-trigger'
     if (e.origin.kind === 'scheduled-trigger') {
       const fired: Pending = { prompt: e.text, firedAt: await $.clock.now() }
       pending = fired
@@ -73,6 +77,7 @@ export function registerRuns(on: On): void {
 
   on('turn.complete', async ($, e, next) => {
     const fired = pending
+    if (e.agentId === undefined) scheduledTurn = false
     if (fired !== undefined && e.agentId === undefined) {
       pending = undefined
       const now = await $.clock.now()
@@ -80,11 +85,17 @@ export function registerRuns(on: On): void {
       const said = e as { answer?: string; text?: string }
       const outcome: Outcome = { reason: e.reason, durationMs: e.durationMs, answer: said.answer ?? said.text ?? '' }
       let run: Run | undefined
-      await updateOwnSession($, file => { run = applyRun(file, fired, outcome, now); delete file.running })
+      let title: string | undefined   // 그 예약의 제목   원격 알림에 프롬프트 대신 보여 줌
+      await updateOwnSession($, file => {
+        const done = applyRun(file, fired, outcome, now)
+        run = done
+        title = file.jobs.find(j => j.id === done.jobId)?.title
+        delete file.running
+      })
       await touchStamp($)
       $.clock.after(CRONLIST_RESYNC_DELAY_MS, () => { void resyncCronList($) })
       // the result to the remote jobs session, as the app's notify setting says
-      const notice = run === undefined ? undefined : await noticeOfRun($, run).catch(() => undefined)
+      const notice = run === undefined ? undefined : await noticeOfRun($, { ...run, title }).catch(() => undefined)
       if (notice !== undefined) await sendToRemote($, notice)
     } else if (e.agentId === undefined) {
       const asked = takeOrder()

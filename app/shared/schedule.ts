@@ -26,7 +26,7 @@ export type SessionFile = {
   remoteSince?: number                 // the first --bg start carried --remote-control
   running?: { promptHead: string; firedAt: number; jobId?: string }   // a scheduled job runs now; jobId when the plugin matched its prompt to a job
   dismissed: string[]
-  jobs: { id: string; cron: string; prompt: string; recurring: boolean; humanSchedule?: string; createdAt: number; expiresAt?: number; nextFireAt?: number; deletedAt?: number; firedAt?: number; goneAt?: number; mode?: RunMode }[]
+  jobs: { id: string; cron: string; prompt: string; recurring: boolean; humanSchedule?: string; createdAt: number; expiresAt?: number; nextFireAt?: number; deletedAt?: number; firedAt?: number; goneAt?: number; mode?: RunMode; title?: string }[]
   runs: { jobId?: string; promptHead?: string; firedAt: number; finishedAt: number; reason: string; taskOutcome?: TaskOutcome; durationMs: number; answerHead: string }[]
 }
 
@@ -61,6 +61,7 @@ export type JobView = {
   isExpiringSoon: boolean
   isDismissed: boolean
   mode?: RunMode                       // set on the job by the plugin's job_mode tool; absent = session or default setting
+  title?: string                       // job_mode 로 모델이 붙인 짧은 제목   "주간 보고 정리"
   lastRun?: { finishedAt: number; reason: string; taskOutcome: TaskOutcome; durationMs: number; answerHead: string }
 }
 
@@ -155,7 +156,7 @@ export function sessionViewOf(file: SessionFile, now: number, isAlive: boolean, 
     const run = [...file.runs].reverse().find(r => r.jobId === j.id)
     const view: JobView = {
       id: j.id, cron: j.cron, humanSchedule: j.humanSchedule ?? j.cron, prompt: j.prompt, recurring: j.recurring,
-      nextAt: j.nextFireAt ?? cronNext(j.cron, now), isExpiringSoon: false, isDismissed: file.dismissed.includes(j.id), mode: j.mode,
+      nextAt: j.nextFireAt ?? cronNext(j.cron, now), isExpiringSoon: false, isDismissed: file.dismissed.includes(j.id), mode: j.mode, title: j.title,
     }
     if (j.expiresAt !== undefined) {
       view.expiresAt = j.expiresAt

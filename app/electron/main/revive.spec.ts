@@ -55,7 +55,8 @@ describe('reviveOnce (F-04: the app writes only its own file)', () => {
     expect(st?.permissionAtStart).toMatchObject({ mode: 'work', allowedTools: DEFAULT_SETTINGS.permission.allowedTools, disallowedTools: DEFAULT_SETTINGS.permission.disallowedTools })
     // the start passed the flags: lists first, then the mode flag, then the message
     const start = claude.calls.find(a => a[0] === '--bg') ?? []
-    expect(start.indexOf('--permission-mode')).toBeGreaterThan(start.indexOf('--disallowedTools'))
+    expect(start.indexOf('--permission-mode')).toBeGreaterThan(start.indexOf('--allowedTools'))
+    expect(start).not.toContain('--disallowedTools')
   })
 
   it('a failed start records nothing in app-state and returns claude\'s output for the retry decision', async () => {

@@ -59,6 +59,7 @@ export function sessionView(file: SessionFile, now: number, isAlive: boolean, is
       cron: j.cron,
       humanSchedule: j.humanSchedule ?? j.cron,
       prompt: j.prompt,
+      ...(j.title !== undefined ? { title: j.title } : {}),
       recurring: j.recurring,
       nextAt,
       isExpiringSoon: false,
@@ -137,7 +138,7 @@ export function formatOverview(o: ClockOutOverview, now: number): string {
       if (j.expiresInDays !== undefined && j.isExpiringSoon) bits.push(`expires in ${j.expiresInDays}d`)
       if (j.lastRun !== undefined) bits.push(`last ${j.lastRun.reason === 'answer' ? 'answered (unverified)' : j.lastRun.reason} ${fmtTime(j.lastRun.finishedAt, now)} (${Math.round(j.lastRun.durationMs / 1000)}s)`)
       if (j.isDismissed) bits.push('hidden')
-      lines.push(`  - ${bits.join(' · ')} | ${j.prompt.replace(/\s+/g, ' ').slice(0, 60)}`)
+      lines.push(`  - ${bits.join(' · ')} | ${j.title ?? j.prompt.replace(/\s+/g, ' ').slice(0, 60)}`)
     }
   }
   if (o.message !== undefined) lines.push('', o.message)
