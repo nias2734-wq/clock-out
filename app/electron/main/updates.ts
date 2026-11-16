@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 
 import { Notification, app, shell } from 'electron'
 
 import { isCapture } from './capture'
+import { readText } from './fsSafe'
 import { log } from './log'
 import { paths } from './paths'
 import { getSettings } from './settings'
@@ -27,7 +28,7 @@ export function isNewer(tag: string, current: string): boolean {
 }
 
 function readChecked(): Checked {
-  try { return JSON.parse(readFileSync(paths.updateCheck, 'utf8')) as Checked } catch { return {} }
+  try { return JSON.parse(readText(paths.updateCheck)) as Checked } catch { return {} }
 }
 
 async function check(): Promise<void> {

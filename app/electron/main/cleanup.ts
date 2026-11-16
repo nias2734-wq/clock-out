@@ -1,14 +1,18 @@
 import { execFile } from 'node:child_process'
+import { readdirSync, statSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
 
-import { attachTargets, clearHow, isAttachedTo, isAutoStopDue, idleSince, stopBlock, stopWarns, tidyList } from '@shared/cleanup'
+import { attachTargets, clearHow, isAttachedTo, isAutoStopDue, isPrunable, idleSince, stopBlock, stopWarns, tidyList, PRUNE_AFTER_MS } from '@shared/cleanup'
 import type { StopBlock, StopCheck } from '@shared/cleanup'
 import { agentStates } from '@shared/runMode'
-import type { Overview, SessionView } from '@shared/schedule'
+import type { Overview, SessionFile, SessionView } from '@shared/schedule'
 
+import { readText } from './fsSafe'
 import { log } from './log'
-import { isRemoteSession } from './remoteState'
+import { paths } from './paths'
+import { isRemoteSession, readRemoteState } from './remoteState'
 import { notice, runClaude, stopBackground } from './revive'
-import { clearDone } from './schedule'
+import { clearDone, liveSessions } from './schedule'
 import { getSettings } from './settings'
 
 // Stops background sessions that are done (each holds about 0.5 GB): the panel's "stop session" button after a fresh
@@ -146,7 +150,8 @@ let cleaning = false
 export async function autoCleanup(o: Overview): Promise<void> {
   const settings = getSettings()
   const now = Date.now()
-  const due = o.sessions.filter(s => isAutoStopDue(s, isRemoteSession(s.sessionId), settings.cleanup, now) && now - (lastAsked.get(s.sessionId) ?? 0) >= RECHECK_MS)
+  const remoteId = readRemoteState().sessionId
+  const due = o.sessions.filter(s => isAutoStopDue(s, s.sessionId === remoteId, settings.cleanup, now) && now - (lastAsked.get(s.sessionId) ?? 0) >= RECHECK_MS)
   if (due.length === 0 || cleaning) return
   cleaning = true
   try {
@@ -169,4 +174,41 @@ export async function autoCleanup(o: Overview): Promise<void> {
   } finally {
     cleaning = false
   }
+}
+
+const PRUNE_FIRST_MS = 60_000              // after the start: the first overview and the wakes come first
+const PRUNE_EVERY_MS = 24 * 60 * 60_000
+
+// Deletes the session files of sessions that ended long ago with nothing left (isPrunable): every session leaves a file
+// and nothing else removes them, so the folder grows by one file per session (873 files after four weeks).
+// A file that cannot be read, or changed while it was looked at, is left alone. Returns how many were deleted.
+export function pruneSessionFiles(now = Date.now()): number {
+  let names: string[] = []
+  try { names = readdirSync(paths.sessionsDir) } catch { return 0 }
+  const live = liveSessions()
+  const remoteId = readRemoteState().sessionId
+  let removed = 0
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    const path = join(paths.sessionsDir, name)
+    try {
+      const mtime = statSync(path).mtimeMs
+      if (now - mtime <= PRUNE_AFTER_MS) continue   // a recent file is not even read
+      const file = JSON.parse(readText(path).replace(/^\uFEFF/, '')) as SessionFile
+      if (`${file.sessionId}.json` !== name) continue
+      if (!isPrunable(file, mtime, now, live.has(file.sessionId) || file.sessionId === remoteId)) continue
+      if (statSync(path).mtimeMs !== mtime) continue   // its session was opened again just now
+      unlinkSync(path)
+      removed++
+    } catch { /* unreadable or gone */ }
+  }
+  if (removed > 0) log(`PRUNE ${removed} session files (ended, no job left, not written for 8 days)`)
+  return removed
+}
+
+export function startPrune(): () => void {
+  const run = () => { try { pruneSessionFiles() } catch (err) { log(`PRUNE error ${String(err)}`) } }
+  const first = setTimeout(run, PRUNE_FIRST_MS)
+  const id = setInterval(run, PRUNE_EVERY_MS)
+  return () => { clearTimeout(first); clearInterval(id) }
 }

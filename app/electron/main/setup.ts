@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { readdirSync, statSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { app } from 'electron'
@@ -7,6 +7,7 @@ import { app } from 'electron'
 import type { SetupCheck, SetupFix } from '@shared/types'
 
 import { captureFixture, isCapture } from './capture'
+import { exists, readText } from './fsSafe'
 import { log } from './log'
 import { paths } from './paths'
 
@@ -41,7 +42,7 @@ function run(file: string, args: string[], timeoutMs = 60_000): Promise<{ code: 
 // The plugin shipped with the app: <resources>/plugin when installed, the repository root in development
 export function bundledPluginDir(): string {
   const packaged = join(process.resourcesPath, 'plugin')
-  if (app.isPackaged && existsSync(join(packaged, '.claude-plugin', 'plugin.json'))) return packaged
+  if (app.isPackaged && exists(join(packaged, '.claude-plugin', 'plugin.json'))) return packaged
   return resolve(app.getAppPath(), '..')
 }
 
@@ -102,7 +103,7 @@ export async function checkSetup(): Promise<SetupCheck[]> {
 
   // 2. Logged in (the usage bar and every revived session need it)
   let loggedIn = false
-  try { loggedIn = Boolean((JSON.parse(readFileSync(paths.credentials, 'utf8')) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken) } catch { /* no file */ }
+  try { loggedIn = Boolean((JSON.parse(readText(paths.credentials)) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken) } catch { /* no file */ }
   checks.push(loggedIn ? { key: 'login', state: 'ok', detail: paths.credentials } : { key: 'login', state: 'error', detail: 'no login token', fix: 'openLogin' })
 
   // 3. The plugin: installed (user scope), or loaded from a development folder (CLAUDE_CODE_PLUGIN_DIRS)
@@ -136,7 +137,7 @@ export async function checkSetup(): Promise<SetupCheck[]> {
   checks.push(wt.code === 0 ? { key: 'terminal', state: 'ok', detail: wt.out.split('\n')[0] ?? '' } : { key: 'terminal', state: 'warn', detail: 'wt.exe not found; Attach opens a console window instead', fix: 'openTerminalStore' })
 
   // 7. Nothing else wakes the same sessions (the v1 widget, the plugin's PowerShell service)
-  const shortcuts = LEGACY_SHORTCUTS.filter(n => existsSync(join(STARTUP_DIR, n)))
+  const shortcuts = LEGACY_SHORTCUTS.filter(n => exists(join(STARTUP_DIR, n)))
   const pids = await legacyWidgetPids()
   checks.push(shortcuts.length === 0 && pids.length === 0
     ? { key: 'conflict', state: 'ok', detail: '' }
@@ -171,7 +172,7 @@ export async function runFix(fix: SetupFix): Promise<{ ok: boolean; message: str
     const removed: string[] = []
     for (const n of LEGACY_SHORTCUTS) {
       const p = join(STARTUP_DIR, n)
-      if (existsSync(p)) { try { unlinkSync(p); removed.push(n) } catch { /* in use */ } }
+      if (exists(p)) { try { unlinkSync(p); removed.push(n) } catch { /* in use */ } }
     }
     // taskkill without /F asks the window to close, so the widget saves its position and exits cleanly
     for (const pid of await legacyWidgetPids()) { await run('taskkill.exe', ['/PID', String(pid)], 15_000); removed.push(`pid ${pid}`) }

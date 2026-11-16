@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { readText } from './fsSafe'
 import { paths } from './paths'
 
 // <config>/clock-out/remote.json: which session is the remote jobs session. Written here, read by the plugin
@@ -8,7 +9,7 @@ import { paths } from './paths'
 export type RemoteState = { sessionId?: string; startedAt?: number }
 
 export function readRemoteState(): RemoteState {
-  try { return JSON.parse(readFileSync(paths.remoteState, 'utf8').replace(/^\uFEFF/, '')) as RemoteState } catch { return {} }
+  try { return JSON.parse(readText(paths.remoteState).replace(/^\uFEFF/, '')) as RemoteState } catch { return {} }
 }
 
 export function writeRemoteState(state: RemoteState): void {

@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { InboxView } from '@shared/schedule'
 
+import { readText } from './fsSafe'
 import { log } from './log'
 import { paths } from './paths'
 
@@ -33,7 +34,7 @@ export function postInbox(sessionId: string, text: string, tag = 'app'): string 
 }
 
 function readMessage(path: string): Message | undefined {
-  try { return JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, '')) as Message } catch { return undefined }
+  try { return JSON.parse(readText(path).replace(/^﻿/, '')) as Message } catch { return undefined }
 }
 
 // Delivered messages go; an undelivered one after a day (logged); failed / unknown ones stay a week for the panel

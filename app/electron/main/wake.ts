@@ -5,10 +5,10 @@ import type { AppSessionState } from '@shared/types'
 import { patchSession, sessionState } from './appState'
 import { postInbox } from './inbox'
 import { log } from './log'
-import { isRemoteSession } from './remoteState'
+import { readRemoteState } from './remoteState'
 import { notice, readFile, reviveOnce } from './revive'
 import type { AttemptResult, ReviveResult } from './revive'
-import { buildOverview, liveSessions, setWakingProvider } from './schedule'
+import { freshOverview, liveSessions, setWakingProvider } from './schedule'
 import { getSettings } from './settings'
 
 // Every wake of a stopped session goes through here: the panel's button, the remote jobs session's requests, deleting a
@@ -21,6 +21,7 @@ export const RETRY_LATER_MS = 10 * 60_000       // after the quick retries: the 
 export const JOIN_RECENT_MS = 30_000            // a session woken this recently takes a new message in its inbox instead
 export const REVIVE_GUARD_MS = 30 * 60_000      // the scheduler does not wake a session again within this after a success
 const TICK_MS = 30_000
+const OVERVIEW_KEPT_MS = 5_000                  // the scheduler takes the watcher's overview when it is this new, instead of building its own
 
 // Only the scheduler respects blocked / nextRetryAt (mayAutoWake); a wake asked for by the person always tries
 export type WakeOpts = { message?: string; forceRemote?: boolean }
@@ -163,11 +164,12 @@ export function startScheduler(afterTick?: (overview: Overview) => Promise<void>
         const settings = getSettings()
         const now = Date.now()
         const today = new Date(now).toDateString()
-        const overview = buildOverview()
+        const overview = freshOverview(OVERVIEW_KEPT_MS)
+        const remoteId = readRemoteState().sessionId
         const sweep = settings.revive.dailyAtEnd && dailyDate !== today && isPastDailyTime(now, settings)
         if (sweep) dailyDate = today
         for (const s of overview.sessions) {
-          if (isRemoteSession(s.sessionId)) continue   // remote.ts keeps that one running
+          if (s.sessionId === remoteId) continue   // remote.ts keeps that one running
           let reason = reopenReason(s, now, settings, true)
           if (reason === undefined && sweep && !s.isAlive && s.warnings.length === 0 && s.jobs.some(j => !j.isDismissed)) reason = { kind: 'daily', text: `daily sweep at ${dailySweepHm(settings)}` }
           if (reason === undefined) continue

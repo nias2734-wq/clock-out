@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync, watch, writeFileSync } from 'node:fs'
+import { readdirSync, statSync, watch, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { FSWatcher } from 'node:fs'
@@ -11,6 +11,7 @@ import type { Overview, SessionFile, SessionView } from '@shared/schedule'
 import type { AppState } from '@shared/types'
 
 import { patchSession, readAppState } from './appState'
+import { exists, readText } from './fsSafe'
 import { inboxProblems } from './inbox'
 import { log } from './log'
 import { paths } from './paths'
@@ -21,10 +22,13 @@ import { getSettings, setSettings } from './settings'
 // names them with a living process.
 
 const TRANSCRIPT_MAX_AGE_MS = 8 * 24 * 60 * 60 * 1000
+const TRANSCRIPT_LIST_KEPT_MS = 30_000   // the transcript folders are not watched: their listing is taken again after this long
 const transcriptCache = new Map<string, { size: number; jobs: ReturnType<typeof jobsFromTranscript> }>()
+// session file name → the file as parsed at that mtime and size: an unchanged file is not read again (most files are ended sessions)
+const sessionFileCache = new Map<string, { mtimeMs: number; size: number; file: SessionFile }>()
 
 function readJson<T>(path: string): T | undefined {
-  try { return JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, '')) as T } catch { return undefined }
+  try { return JSON.parse(readText(path).replace(/^﻿/, '')) as T } catch { return undefined }
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -47,23 +51,49 @@ export function liveSessions(): Map<string, LiveRecord> {
   return live
 }
 
+// One answer per folder while one overview is built: many sessions share a cwd
+type CwdCheck = (cwd: string) => boolean
+function cwdCheck(): CwdCheck {
+  const known = new Map<string, boolean>()
+  return cwd => {
+    let found = known.get(cwd)
+    if (found === undefined) { found = cwd !== '' && exists(cwd); known.set(cwd, found) }
+    return found
+  }
+}
+
+// The session file as last parsed, read again only when its mtime or size changed. A file that does not parse is not kept
+// (it may be half written) and is read again on the next overview.
+function cachedSessionFile(name: string): { file: SessionFile; mtime: number } | undefined {
+  const path = join(paths.sessionsDir, name)
+  let st: { mtimeMs: number; size: number }
+  try { st = statSync(path) } catch { sessionFileCache.delete(name); return undefined }   // gone between list and stat
+  const cached = sessionFileCache.get(name)
+  if (cached !== undefined && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return { file: cached.file, mtime: st.mtimeMs }
+  const file = readJson<SessionFile>(path)
+  if (file === undefined) { sessionFileCache.delete(name); return undefined }
+  sessionFileCache.set(name, { mtimeMs: st.mtimeMs, size: st.size, file })
+  return { file, mtime: st.mtimeMs }
+}
+
 // files: every plugin session file read, normalized, for the missed-job check
-function pluginSessions(now: number, live: Map<string, LiveRecord>, app: AppState, files: Map<string, SessionFile>): SessionView[] {
+function pluginSessions(now: number, live: Map<string, LiveRecord>, app: AppState, files: Map<string, SessionFile>, hasCwd: CwdCheck): SessionView[] {
   const views: SessionView[] = []
   let names: string[] = []
   try { names = readdirSync(paths.sessionsDir) } catch { return views }
+  const listed = new Set(names)
+  for (const name of sessionFileCache.keys()) if (!listed.has(name)) sessionFileCache.delete(name)
   for (const name of names) {
     if (!name.endsWith('.json')) continue
-    const path = join(paths.sessionsDir, name)
-    const file = readJson<SessionFile>(path)
-    if (file === undefined || file.version !== 1 || typeof file.sessionId !== 'string') continue
+    const read = cachedSessionFile(name)
+    if (read === undefined) continue
+    const { file, mtime } = read
+    if (file.version !== 1 || typeof file.sessionId !== 'string') continue
     const fresh = file.alive && file.heartbeatAt !== undefined && now - file.heartbeatAt < HEARTBEAT_STALE_MS
     const isAlive = fresh || live.has(file.sessionId)
-    let mtime = 0
-    try { mtime = statSync(path).mtimeMs } catch { /* gone between list and stat */ }
     const normal: SessionFile = { ...file, dismissed: dismissedWith(file.dismissed ?? [], app.sessions[file.sessionId]?.hidden), jobs: file.jobs ?? [], runs: file.runs ?? [] }
     files.set(file.sessionId, normal)
-    const warnings = validateSessionFile(normal, mtime, now, file.cwd !== '' && existsSync(file.cwd))
+    const warnings = validateSessionFile(normal, mtime, now, hasCwd(file.cwd))
     const view = sessionViewOf(normal, now, isAlive, 'plugin', warnings, getSettings().doneCleared[file.sessionId])
     const bridge = live.get(file.sessionId)?.bridge
     if (bridge !== undefined) view.remoteUrl = `https://claude.ai/code/${bridge}`
@@ -72,13 +102,15 @@ function pluginSessions(now: number, live: Map<string, LiveRecord>, app: AppStat
   return views
 }
 
-// Transcripts under <config>/projects/*/<sessionId>.jsonl written in the last 8 days, newest first
-function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<string>, app: AppState): SessionView[] {
-  const views: SessionView[] = []
+type TranscriptEntry = { path: string; sessionId: string; mtime: number; size: number }
+let transcriptList: { at: number; files: TranscriptEntry[] } | undefined
+
+// Every <config>/projects/*/<sessionId>.jsonl written in the last 8 days, newest first; one listing serves TRANSCRIPT_LIST_KEPT_MS
+function transcriptFiles(now: number): TranscriptEntry[] {
+  if (transcriptList !== undefined && now >= transcriptList.at && now - transcriptList.at < TRANSCRIPT_LIST_KEPT_MS) return transcriptList.files
+  const files: TranscriptEntry[] = []
   let projects: string[] = []
-  try { projects = readdirSync(join(paths.configDir, 'projects')) } catch { return views }
-  const seenJobIds = new Set<string>()
-  const files: { path: string; sessionId: string; mtime: number; size: number }[] = []
+  try { projects = readdirSync(join(paths.configDir, 'projects')) } catch { return files }
   for (const project of projects) {
     const dir = join(paths.configDir, 'projects', project)
     let names: string[] = []
@@ -86,7 +118,6 @@ function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<s
     for (const name of names) {
       if (!name.endsWith('.jsonl')) continue
       const sessionId = name.slice(0, -'.jsonl'.length)
-      if (skip.has(sessionId)) continue
       try {
         const st = statSync(join(dir, name))
         if (now - st.mtimeMs > TRANSCRIPT_MAX_AGE_MS) continue
@@ -95,11 +126,20 @@ function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<s
     }
   }
   files.sort((a, b) => b.mtime - a.mtime)
-  for (const f of files) {
+  transcriptList = { at: now, files }
+  return files
+}
+
+// Sessions without a session file, from their transcripts (legacyTranscriptScan)
+function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<string>, app: AppState, hasCwd: CwdCheck): SessionView[] {
+  const views: SessionView[] = []
+  const seenJobIds = new Set<string>()
+  for (const f of transcriptFiles(now)) {
+    if (skip.has(f.sessionId)) continue
     let cached = transcriptCache.get(f.path)
     if (cached === undefined || cached.size !== f.size) {
       let jobs: ReturnType<typeof jobsFromTranscript> = []
-      try { jobs = jobsFromTranscript(readFileSync(f.path, 'utf8').split('\n')) } catch { /* unreadable */ }
+      try { jobs = jobsFromTranscript(readText(f.path).split('\n')) } catch { /* unreadable */ }
       cached = { size: f.size, jobs }
       transcriptCache.set(f.path, cached)
     }
@@ -109,7 +149,7 @@ function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<s
     if (own.length === 0) continue
     const file = sessionFileFromTranscript(f.sessionId, own)
     file.dismissed = dismissedWith([], app.sessions[f.sessionId]?.hidden)
-    const warnings = validateSessionFile(file, f.mtime, now, file.cwd !== '' && existsSync(file.cwd))
+    const warnings = validateSessionFile(file, f.mtime, now, hasCwd(file.cwd))
     views.push(sessionViewOf(file, now, live.has(f.sessionId), 'transcript', warnings, getSettings().doneCleared[f.sessionId]))
   }
   return views
@@ -117,8 +157,8 @@ function transcriptSessions(now: number, live: Map<string, unknown>, skip: Set<s
 
 let last: Overview = { builtAt: 0, sessions: [], jobCount: 0 }
 // remote.ts adds the remote jobs session's state (set from index.ts; schedule.ts must not import remote.ts)
-let remoteProvider: (() => Overview['remote']) | undefined
-export function setRemoteProvider(p: () => Overview['remote']): void { remoteProvider = p }
+let remoteProvider: ((live: Map<string, LiveRecord>) => Overview['remote']) | undefined
+export function setRemoteProvider(p: (live: Map<string, LiveRecord>) => Overview['remote']): void { remoteProvider = p }
 // wake.ts tells which sessions it is waking now (set from wake.ts, which imports this file)
 let wakingProvider: ((sessionId: string) => boolean) | undefined
 export function setWakingProvider(p: (sessionId: string) => boolean): void { wakingProvider = p }
@@ -163,15 +203,22 @@ function missedNow(now: number, sessions: SessionView[], files: Map<string, Sess
 }
 export function currentOverview(): Overview { return last }
 
+// The last overview when it was built within maxAgeMs, else a new one: the scheduler's tick often comes right after the watcher's
+export function freshOverview(maxAgeMs: number): Overview {
+  const age = Date.now() - last.builtAt
+  return age >= 0 && age < maxAgeMs ? last : buildOverview()
+}
+
 export function buildOverview(): Overview {
   const now = Date.now()
   const live = liveSessions()
   const app = readAppState()
   const files = new Map<string, SessionFile>()
-  const sessions = pluginSessions(now, live, app, files)
+  const hasCwd = cwdCheck()
+  const sessions = pluginSessions(now, live, app, files, hasCwd)
   if (getSettings().legacyTranscriptScan) {
     const known = new Set(sessions.map(s => s.sessionId))
-    sessions.push(...transcriptSessions(now, live, known, app))
+    sessions.push(...transcriptSessions(now, live, known, app, hasCwd))
   }
   const inbox = inboxProblems()
   for (const s of sessions) {
@@ -181,7 +228,7 @@ export function buildOverview(): Overview {
     withAppState(s, app, inbox)
   }
   const missed = missedNow(now, sessions, files, app)
-  last = { ...overviewOf(sessions, now), remote: remoteProvider?.(), missed }
+  last = { ...overviewOf(sessions, now), remote: remoteProvider?.(live), missed }
   // the remote jobs session's status tool reads this, so the phone and the app show the same list
   // (the plugin alone cannot see sessions found only in transcripts)
   try { writeFileSync(paths.overview, JSON.stringify(last), 'utf8') } catch { /* folder not there yet */ }

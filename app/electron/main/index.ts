@@ -6,6 +6,7 @@ import { BrowserWindow, Menu, Tray, app, clipboard, ipcMain, nativeImage, native
 import type { MenuItemConstructorOptions } from 'electron'
 
 import { remoteIsOn } from '@shared/schedule'
+import type { Overview } from '@shared/schedule'
 import type { AppSettings, SetupFix } from '@shared/types'
 
 import { SHOT_DIR } from './capture'
@@ -19,7 +20,7 @@ import { attachSession, notice, onNotice, openSession, openTerminal } from './re
 import { startScheduler, wakeSession } from './wake'
 import { onRemoteSettings, openMonitor, remoteView, startRemote } from './remote'
 import { checkRuns, startRunWatch } from './runWatch'
-import { autoCleanup, clearSession, stopCheck, stopIfDone, tidyDone } from './cleanup'
+import { autoCleanup, clearSession, startPrune, stopCheck, stopIfDone, tidyDone } from './cleanup'
 import { buildOverview, currentOverview, setRemoteProvider, setRemoteSessionProvider, toggleHide, watchSchedule } from './schedule'
 import { getSettings, setSettings } from './settings'
 import { bundledPluginDir, checkSetup, runFix } from './setup'
@@ -127,6 +128,16 @@ function broadcast(channel: string, ...args: unknown[]): void {
   for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, ...args)
 }
 
+// The schedule to every window. always = false (the watcher's overviews): sent only when it differs from the last one sent,
+// builtAt aside — the session files change every few seconds with heartbeats that change nothing on screen
+let lastScheduleSent = ''
+function broadcastSchedule(o: Overview, always = true): void {
+  const key = JSON.stringify({ ...o, builtAt: 0 })
+  if (!always && key === lastScheduleSent) return
+  lastScheduleSent = key
+  broadcast('schedule', o)
+}
+
 // icon.png for windows; tray.png for the tray (Electron picks tray@1.5x / @2x by display scale)
 function iconPath(file = 'icon.png'): string {
   return join(__dirname, '../../resources', file)
@@ -173,6 +184,17 @@ function fitStripShape(win: BrowserWindow, width: number): void {
   win.setShape([{ x: 0, y: 0, width, height: STRIP_HEIGHT }])
 }
 
+const TOPMOST_CHECK_MS = 5_000
+
+// Something outside the app now and then takes the bar's always-on-top flag: the bar then goes under any window that is
+// clicked, until the app starts again. None of the app's own window calls does it (resize, hide / show, the panel: measured).
+// The flag is put back when it is found missing, and logged so that what takes it can be found.
+function keepStripOnTop(why: string): void {
+  if (strip === undefined || strip.isDestroyed() || !strip.isVisible() || strip.isAlwaysOnTop()) return
+  strip.setAlwaysOnTop(true, 'screen-saver')
+  log(`TOPMOST restored (${why})`)
+}
+
 function createStrip(): BrowserWindow {
   const settings = getSettings()
   const { x, y } = placeInsideScreen(settings.statusBar.x, settings.statusBar.y)
@@ -186,6 +208,8 @@ function createStrip(): BrowserWindow {
   })
   win.setMenu(null)
   win.setAlwaysOnTop(true, 'screen-saver')
+  win.on('show', () => keepStripOnTop('show'))
+  win.on('blur', () => keepStripOnTop('blur'))
   fitStripShape(win, STRIP_WIDTH)
   // during a strip:drag the position is saved once at the end, not on every step
   win.on('moved', () => { if (dragFrom === undefined) saveStripPosition(win) })
@@ -370,12 +394,12 @@ function registerIpc(): void {
   // missed jobs (Overview.missed): run one now (its prompt as the first message) or close it
   ipcMain.handle('schedule:runMissed', async (_e, sessionId: string, key: string) => {
     const text = await runMissed(String(sessionId), String(key))
-    broadcast('schedule', buildOverview())
+    broadcastSchedule(buildOverview())
     return text
   })
   ipcMain.handle('schedule:dismissMissed', (_e, sessionId: string, key: string) => {
     const text = dismissMissed(String(sessionId), String(key))
-    broadcast('schedule', buildOverview())
+    broadcastSchedule(buildOverview())
     return text
   })
   ipcMain.handle('schedule:delete', (_e, sessionId: string, jobId: string) => deleteJob(String(sessionId), String(jobId)))
@@ -386,12 +410,12 @@ function registerIpc(): void {
   ipcMain.handle('schedule:clear', async (_e, sessionId: string, confirmed: boolean) => {
     const s = buildOverview().sessions.find(x => x.sessionId === sessionId)
     const text = s === undefined ? `no session ${String(sessionId).slice(0, 8)}` : await clearSession(s, confirmed === true)
-    broadcast('schedule', buildOverview())   // the cleaned rows go now, not on the next 30 s tick
+    broadcastSchedule(buildOverview())   // the cleaned rows go now, not on the next 30 s tick
     return text
   })
   ipcMain.handle('schedule:tidyDone', async (_e, sessionIds: string[]) => {
     const text = await tidyDone(buildOverview().sessions, Array.isArray(sessionIds) ? sessionIds.map(String) : [])
-    broadcast('schedule', buildOverview())
+    broadcastSchedule(buildOverview())
     return text
   })
   // the session id popover's copy button (the sandboxed page has no clipboard of its own)
@@ -413,6 +437,7 @@ function registerIpc(): void {
     if (strip === undefined || strip.isDestroyed() || !Number.isFinite(width)) return
     const area = screen.getPrimaryDisplay().workArea
     const w = Math.min(Math.max(Math.ceil(width), 320), area.width)
+    if (w === strip.getBounds().width) return   // the bar asks on every redraw; nothing to do at the same width
     const [x = 0, y = 0] = strip.getPosition()
     strip.setBounds({ x: Math.min(x, area.x + area.width - w), y, width: w, height: STRIP_HEIGHT })
     fitStripShape(strip, w)
@@ -561,13 +586,19 @@ if (SHOT_DIR !== undefined && ((process.env.CLAUDE_CONFIG_DIR ?? '') === '' || r
     powerMonitor.on('resume', () => { setTimeout(() => refreshUsage(), USAGE_RESUME_DELAY_MS) })
     setRemoteProvider(remoteView)   // before the first overview is built
     setRemoteSessionProvider(() => readRemoteState().sessionId)
-    watchSchedule(o => { broadcast('schedule', o); checkRuns(o) }, 30_000)
+    watchSchedule(o => { broadcastSchedule(o, false); checkRuns(o) }, 30_000)
+    setInterval(() => keepStripOnTop('check'), TOPMOST_CHECK_MS)
+    screen.on('display-added', () => keepStripOnTop('display-added'))
+    screen.on('display-removed', () => keepStripOnTop('display-removed'))
+    screen.on('display-metrics-changed', () => keepStripOnTop('display-metrics-changed'))
+    powerMonitor.on('resume', () => keepStripOnTop('resume'))
+    powerMonitor.on('unlock-screen', () => keepStripOnTop('unlock-screen'))
     onNotice((text, kind) => broadcast('notice', text, kind))
     if (SHOT_DIR === undefined && process.env.CLOCKOUT_REVIVE === undefined) {
-      startScheduler(autoCleanup); startRemote(); startRunWatch(); setInterval(pingTick, 60_000); pingTick(); startUpdateCheck()
+      startScheduler(autoCleanup); startRemote(); startRunWatch(); startPrune(); setInterval(pingTick, 60_000); pingTick(); startUpdateCheck()
       // jobs that went by while the PC was off or asleep: one notice, nothing runs on its own (missed.ts)
       checkMissed('start')
-      powerMonitor.on('resume', () => { try { checkMissed('resume'); broadcast('schedule', currentOverview()) } catch (err) { log(`MISSED error ${String(err)}`) } })
+      powerMonitor.on('resume', () => { try { checkMissed('resume'); broadcastSchedule(currentOverview()) } catch (err) { log(`MISSED error ${String(err)}`) } })
     }
     // dev: CLOCKOUT_REVIVE=<session id> wakes that session once and quits
     if (process.env.CLOCKOUT_REVIVE !== undefined) {

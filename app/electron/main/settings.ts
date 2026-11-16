@@ -1,10 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { prunedCleared } from '@shared/schedule'
 import { DEFAULT_SETTINGS, RUN_MODES } from '@shared/types'
 import type { AppSettings, RunMode } from '@shared/types'
 
+import { readText } from './fsSafe'
 import { paths } from './paths'
 
 let current: AppSettings | undefined
@@ -55,7 +56,7 @@ export function getSettings(): AppSettings {
   if (current !== undefined) return current
   try {
     // a BOM (PowerShell's Out-File writes one) would make JSON.parse throw and silently reset every setting
-    current = merge(JSON.parse(readFileSync(paths.appSettings, 'utf8').replace(/^﻿/, '')) as Partial<AppSettings>)
+    current = merge(JSON.parse(readText(paths.appSettings).replace(/^﻿/, '')) as Partial<AppSettings>)
   } catch {
     current = { ...DEFAULT_SETTINGS }
   }

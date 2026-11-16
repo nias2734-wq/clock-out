@@ -52,6 +52,7 @@ const STAGE = {
 
 export function StatusBar({ usage, settings, overview, expanded, now, version, onToggle, onQuit }: Props) {
   const ref = useRef<HTMLDivElement>(null)
+  const sentWidth = useRef(0)   // the width last sent to the main process: the same width is not sent again
   // The window follows the bar's natural width: the info row's own width (max-content, never stretched by the
   // window) plus the buttons, the paddings and the gap, rounded up with slack for fractional DPI scaling.
   // Sent while expanded too, so the panel is never narrower than the bar and its buttons are never cut off.
@@ -62,7 +63,12 @@ export function StatusBar({ usage, settings, overview, expanded, now, version, o
     const grip = el.querySelector('.grip') as HTMLElement | null
     const actions = el.querySelector('.strip-actions') as HTMLElement | null
     if (info === null || grip === null || actions === null) return
-    const fit = () => api.setStripWidth(Math.ceil(grip.getBoundingClientRect().width + 6 + info.getBoundingClientRect().width + actions.getBoundingClientRect().width) + 6 + 4 + 8 + 2 + 4)
+    const fit = () => {
+      const width = Math.ceil(grip.getBoundingClientRect().width + 6 + info.getBoundingClientRect().width + actions.getBoundingClientRect().width) + 6 + 4 + 8 + 2 + 4
+      if (width === sentWidth.current) return
+      sentWidth.current = width
+      api.setStripWidth(width)
+    }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(info)

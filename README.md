@@ -72,6 +72,7 @@ So when you say "schedule this", Claude picks `CronCreate`, and the job silently
 
 | Claude Code | Checked by | What was checked |
 | --- | --- | --- |
+| 2.1.325 | developer, 2026-11-16 (0.16.0) | `claude plugin validate .` passes, `claude plugin test .` 76 pass, app tests 122 pass |
 | 2.1.306 | developer, 2026-10-21 (0.14.0) | `claude plugin validate .` passes, `claude plugin test .` 69 pass, app tests 108 pass |
 | 2.1.304 | developer, 2026-10-20 | `claude plugin validate .` passes, `claude plugin test .` 40 pass, plugin API types + `tsc -p .` pass on a fresh clone |
 | 2.1.304 | external review, 2026-10-20 (commit `1ec1b94`) | `claude plugin validate .` passes, `claude plugin test .` 40 pass, app tests 64 pass |
@@ -269,7 +270,7 @@ Everything is under `~/.claude/clock-out/`, or `<CLAUDE_CONFIG_DIR>/clock-out/` 
 
 | Path | Contents | Written by |
 | --- | --- | --- |
-| `sessions/<session id>.json` | each session's jobs, heartbeat, run results | the plugin (each session only its own file) |
+| `sessions/<session id>.json` | each session's jobs, heartbeat, run results | the plugin (each session only its own file); the app deletes it once the session has ended with no job left and nothing done or written for 8 days |
 | `inbox/<session id>/` | messages between sessions (instructions, answers, notices) | the plugin, the app |
 | `requests/` | the plugin's requests to the app (wake, reopen with remote) | the plugin |
 | `remote/` | the remote jobs session's working folder (a CLAUDE.md with its role) | the app |
@@ -442,6 +443,7 @@ Claude Code 에서 세션이 꺼져도 도는 예약은 이미 있습니다. 그
 
 | Claude Code | 확인한 사람 | 확인한 것 |
 | --- | --- | --- |
+| 2.1.325 | 개발자, 2026-11-16 (0.16.0) | `claude plugin validate .` 통과, `claude plugin test .` 76개 통과, 앱 테스트 122개 통과 |
 | 2.1.306 | 개발자, 2026-10-21 (0.14.0) | `claude plugin validate .` 통과, `claude plugin test .` 69개 통과, 앱 테스트 108개 통과 |
 | 2.1.304 | 개발자, 2026-10-20 | `claude plugin validate .` 통과, `claude plugin test .` 40개 통과, 새 clone 에서 플러그인 API 타입 생성 + `tsc -p .` 통과 |
 | 2.1.304 | 외부 평가, 2026-10-20 (커밋 `1ec1b94`) | `claude plugin validate .` 통과, `claude plugin test .` 40개 통과, 앱 테스트 64개 통과 |
@@ -639,7 +641,7 @@ claude plugin marketplace remove clock-out
 
 | 경로 | 내용 | 쓰는 쪽 |
 | --- | --- | --- |
-| `sessions/<세션 id>.json` | 세션별 예약 · 살아 있음 표시 · 실행 결과 | 플러그인(세션마다 자기 파일만) |
+| `sessions/<세션 id>.json` | 세션별 예약 · 살아 있음 표시 · 실행 결과 | 플러그인(세션마다 자기 파일만). 세션이 끝났고 남은 예약이 없으며 8일 동안 실행도 기록도 없으면 앱이 지움 |
 | `inbox/<세션 id>/` | 세션 사이 메시지(지시 · 응답 · 알림) | 플러그인, 앱 |
 | `requests/` | 플러그인이 앱에 맡기는 요청(깨우기 · 원격으로 다시 열기) | 플러그인 |
 | `remote/` | 원격 예약 작업 세션의 작업 폴더(역할을 적은 CLAUDE.md) | 앱 |

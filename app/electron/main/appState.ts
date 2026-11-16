@@ -1,12 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import type { AppSessionState, AppState } from '@shared/types'
 
+import { readText } from './fsSafe'
 import { paths } from './paths'
 
 // <config>/clock-out/app-state.json: what the app keeps per session (bgSince, wake attempts, hidden jobs …).
-// Only this module writes it; the plugin's session files (sessions/<id>.json) are the plugin's and the app only reads them.
+// Only this module writes it; the plugin's session files (sessions/<id>.json) are the plugin's: the app reads them and
+// deletes those of sessions that ended long ago with nothing left (cleanup.ts pruneSessionFiles), nothing else.
 // A write goes to a temporary file first and then replaces the old one, so a reader never sees half a file.
 
 const REQUESTS_KEPT = 200
@@ -16,7 +18,7 @@ const empty = (): AppState => ({ version: 1, sessions: {} })
 // An unreadable or foreign file reads as empty (the wake guards then start over; nothing is lost from the plugin's files)
 export function readAppState(): AppState {
   try {
-    const parsed = JSON.parse(readFileSync(paths.appState, 'utf8').replace(/^﻿/, '')) as Partial<AppState>
+    const parsed = JSON.parse(readText(paths.appState).replace(/^﻿/, '')) as Partial<AppState>
     if (parsed.version !== 1 || typeof parsed.sessions !== 'object' || parsed.sessions === null) return empty()
     return { version: 1, sessions: parsed.sessions, requestsDone: Array.isArray(parsed.requestsDone) ? parsed.requestsDone.filter(x => typeof x === 'string') : undefined }
   } catch {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { attachTargets, clearHow, idleSince, isAttachedTo, isAutoStopDue, stopBlock, stopWarns, tidyList, tidyTargets } from './cleanup'
+import { attachTargets, clearHow, idleSince, isAttachedTo, isAutoStopDue, isPrunable, stopBlock, stopWarns, tidyList, tidyTargets, PRUNE_AFTER_MS } from './cleanup'
 import type { SessionView } from './schedule'
 
 const NOW = new Date(2026, 9, 20, 10, 0).getTime()
@@ -127,5 +127,30 @@ describe('isAutoStopDue', () => {
     expect(isAutoStopDue(view({ running: { promptHead: 'x', firedAt: NOW - 60 * MIN } }), false, CLEANUP, NOW)).toBe(false)
     expect(isAutoStopDue(view({ remoteUrl: 'https://claude.ai/code/session_x' }), false, CLEANUP, NOW)).toBe(false)
     expect(isAutoStopDue(view({ done: [], liveSince: undefined }), false, CLEANUP, NOW)).toBe(false)
+  })
+})
+
+describe('isPrunable', () => {
+  const DAY = 24 * 60 * MIN
+  const OLD = NOW - PRUNE_AFTER_MS - MIN   // the file was last written just over 8 days ago
+  const job = { id: 'job00001', cron: '0 9 * * *', prompt: 'p', recurring: true, createdAt: NOW - 20 * DAY }
+  const ended = { version: 1 as const, heartbeatAt: NOW - 9 * DAY, jobs: [], runs: [] }
+
+  it('an ended session with nothing left, not written for 8 days', () => {
+    expect(isPrunable(ended, OLD, NOW, false)).toBe(true)
+    expect(isPrunable({ ...ended, jobs: [{ ...job, deletedAt: NOW - 9 * DAY }, { ...job, id: 'job00002', goneAt: NOW - 9 * DAY }] }, OLD, NOW, false)).toBe(true)
+    expect(isPrunable({ ...ended, jobs: [{ ...job, recurring: false, firedAt: NOW - 9 * DAY }] }, OLD, NOW, false)).toBe(true)
+  })
+  it('never a running session, a recent file or another file version', () => {
+    expect(isPrunable(ended, OLD, NOW, true)).toBe(false)
+    expect(isPrunable(ended, NOW - PRUNE_AFTER_MS, NOW, false)).toBe(false)
+    expect(isPrunable({ ...ended, heartbeatAt: NOW - MIN }, OLD, NOW, false)).toBe(false)
+    expect(isPrunable({ ...ended, version: 2 as unknown as 1 }, OLD, NOW, false)).toBe(false)
+  })
+  it('never with a job left or running, or something done in the last 7 days', () => {
+    expect(isPrunable({ ...ended, jobs: [job] }, OLD, NOW, false)).toBe(false)
+    expect(isPrunable({ ...ended, running: { promptHead: 'x', firedAt: NOW - 9 * DAY } }, OLD, NOW, false)).toBe(false)
+    expect(isPrunable({ ...ended, runs: [{ firedAt: NOW - 2 * DAY, finishedAt: NOW - 2 * DAY, reason: 'answer', durationMs: 1, answerHead: '' }] }, OLD, NOW, false)).toBe(false)
+    expect(isPrunable({ ...ended, jobs: [{ ...job, recurring: false, firedAt: NOW - 2 * DAY }] }, OLD, NOW, false)).toBe(false)
   })
 })

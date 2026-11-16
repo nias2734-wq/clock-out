@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+import { readText } from './fsSafe'
 
 // Capture mode (CLOCKOUT_SHOT_DIR=<folder>): the app saves its windows as PNG and quits.
 // Nothing in it reaches the real PC or account: no usage request, no `claude` run, no Windows autostart entry,
@@ -14,5 +15,5 @@ export function isCapture(): boolean {
 
 // <config>/clock-out/capture/<name>.json, or undefined when the capture folder has none
 export function captureFixture<T>(configDir: string, name: string): T | undefined {
-  try { return JSON.parse(readFileSync(join(configDir, 'clock-out', 'capture', `${name}.json`), 'utf8')) as T } catch { return undefined }
+  try { return JSON.parse(readText(join(configDir, 'clock-out', 'capture', `${name}.json`))) as T } catch { return undefined }
 }

@@ -1,9 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 
 import { formatLocalStamp } from '@shared/time'
 import type { UsageState, UsageWindow } from '@shared/types'
 
 import { isCapture } from './capture'
+import { readText } from './fsSafe'
 import { log } from './log'
 import { paths } from './paths'
 
@@ -29,7 +30,7 @@ type Res = Record<string, unknown> & { limits?: Limit[] }
 type Cache = { fetchedAt?: string; res?: Res; nextAllowed?: string; backoffSec?: number }
 
 function readCache(): Cache {
-  try { return JSON.parse(readFileSync(paths.usageCache, 'utf8')) as Cache } catch { return {} }
+  try { return JSON.parse(readText(paths.usageCache)) as Cache } catch { return {} }
 }
 function writeCache(c: Cache): void {
   try { writeFileSync(paths.usageCache, JSON.stringify(c, null, 2), 'utf8') } catch { /* shared file may be locked */ }
@@ -55,7 +56,7 @@ class UsageError extends Error {}
 
 function token(): string {
   let text: string
-  try { text = readFileSync(paths.credentials, 'utf8') } catch { throw new UsageError('credentials unreadable') }
+  try { text = readText(paths.credentials) } catch { throw new UsageError('credentials unreadable') }
   let cred: { claudeAiOauth?: { accessToken?: string } }
   try { cred = JSON.parse(text.replace(/^\uFEFF/, '')) as typeof cred } catch { throw new UsageError('credentials not JSON') }
   const t = cred?.claudeAiOauth?.accessToken

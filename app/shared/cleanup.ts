@@ -1,7 +1,8 @@
 // Which running background sessions can be stopped to free memory (about 0.5 GB each: claude.exe + its pty host),
 // from the panel's "stop session" button and the automatic cleanup. Pure functions only; the commands are
 // electron/main/cleanup.ts. A stopped session keeps its transcript and jobs, and `--bg --resume` brings them back.
-import type { SessionView } from './schedule'
+import { DAY_MS, HEARTBEAT_STALE_MS, WEEK_MS } from './schedule'
+import type { SessionFile, SessionView } from './schedule'
 import type { AppSettings } from './types'
 
 // Why a session cannot be stopped now: terminal = runs in a terminal window (/exit there) | remote = the remote jobs
@@ -91,4 +92,20 @@ export function isAutoStopDue(s: SessionView, isRemote: boolean, cleanup: AppSet
   if (s.jobs.some(j => !j.isDismissed)) return false
   const since = idleSince(s)
   return since !== undefined && now - since >= cleanup.idleMinutes * 60_000
+}
+
+// A session file the app may delete (electron/main/cleanup.ts pruneSessionFiles): the session ended, no job is left or
+// running, nothing was done in the last 7 days (the done list shows 7 days) and the file was not written for 8 days.
+// isRunning = Claude Code lists a living process for it, or it is the remote jobs session. A job counts as left by the
+// same rule as the list (sessionViewOf): not deleted, not gone, not fired. A session opened again gets a new file from the plugin.
+export const PRUNE_AFTER_MS = 8 * DAY_MS
+export function isPrunable(file: Pick<SessionFile, 'version' | 'heartbeatAt' | 'running' | 'jobs' | 'runs'>, mtimeMs: number, now: number, isRunning: boolean): boolean {
+  if (isRunning || file.version !== 1 || file.running !== undefined) return false
+  if (now - mtimeMs <= PRUNE_AFTER_MS) return false
+  if (file.heartbeatAt !== undefined && now - file.heartbeatAt < HEARTBEAT_STALE_MS) return false
+  const jobs = file.jobs ?? []
+  if (jobs.some(j => j.deletedAt === undefined && j.goneAt === undefined && j.firedAt === undefined)) return false
+  const since = now - WEEK_MS
+  if ((file.runs ?? []).some(r => r.finishedAt >= since)) return false
+  return !jobs.some(j => j.firedAt !== undefined && j.firedAt >= since)
 }

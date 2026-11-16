@@ -1,5 +1,4 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { Notification } from 'electron'
@@ -11,6 +10,7 @@ import type { AppSessionState } from '@shared/types'
 
 import { patchSession, sessionState } from './appState'
 import { captureFixture, isCapture } from './capture'
+import { exists, readText } from './fsSafe'
 import { log } from './log'
 import { paths } from './paths'
 import { getSettings } from './settings'
@@ -52,7 +52,7 @@ export async function wasBackgroundBefore(sessionId: string): Promise<boolean> {
 }
 
 export function readFile(sessionId: string): SessionFile | undefined {
-  try { return JSON.parse(readFileSync(join(paths.sessionsDir, `${sessionId}.json`), 'utf8').replace(/^﻿/, '')) as SessionFile } catch { return undefined }
+  try { return JSON.parse(readText(join(paths.sessionsDir, `${sessionId}.json`)).replace(/^﻿/, '')) as SessionFile } catch { return undefined }
 }
 
 export type ReviveResult = { ok: boolean; message: string }
@@ -141,7 +141,7 @@ export function attachSession(s: SessionView): string {
 
 // A new terminal window running the given command (Windows Terminal, else a console), started in cwd when it exists
 export function openTerminal(cmd: string[], cwd?: string): void {
-  const dir = cwd !== undefined && cwd !== '' && existsSync(cwd) ? cwd : undefined
+  const dir = cwd !== undefined && cwd !== '' && exists(cwd) ? cwd : undefined
   const child = spawn('wt.exe', ['-w', 'new', ...(dir !== undefined ? ['-d', dir] : []), ...cmd], { cwd: dir, detached: true, stdio: 'ignore' })
   child.on('error', () => { spawn('cmd.exe', ['/c', 'start', ...cmd], { cwd: dir, detached: true, stdio: 'ignore' }).unref() })
   child.unref()

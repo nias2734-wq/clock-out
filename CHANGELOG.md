@@ -4,6 +4,14 @@ One version for the plugin and the desktop app. `node scripts/version.js <x.y.z>
 `node scripts/version.js --check` verifies it. Each release is tagged `v<x.y.z>`.
 Versioning: **minor** for new features, **patch** for fixes only.
 
+## 0.16.0 (2026-11-16)
+
+- **Fixed: the app's memory grew by about 2.8 GB a day** (12 GB after 105 hours). In Electron 33.4.11 (Node 20.18.3) `readFileSync(path, 'utf8')` and `existsSync(path)` keep about 190 bytes of native memory on every call (18 MB per 100,000 calls, measured), and the app made over 300 such calls a second. It now reads a Buffer and decodes it, and checks a path with `statSync`; neither grows. A build with the fix stayed at 87 MB over 20 minutes.
+- **Much less work while nothing happens.** A session file is read again only when it changed, the scheduler takes the list the folder watcher just built instead of building its own, the windows get a new list only when it differs from the last one, and the status bar's window is resized only when its width changed. Over 3 minutes: file reads 26,881 → 344, stat calls 57,516 → 8,820, the main process's CPU time 1.27 → 0.23 seconds a minute.
+- **Old session files are deleted.** Every session leaves `sessions/<session id>.json` and nothing removed them (881 files after four weeks). One minute after its start and once a day the app deletes the files of sessions that ended, have no job left or running, did nothing in the last 7 days and were not written for 8 days. A session opened again gets a new file from the plugin; conversations are not touched.
+- **Fixed: the status bar sometimes went under other windows.** Something outside the app now and then takes the bar's always-on-top flag, and the bar then stayed under any clicked window until the app was started again. What takes it is not found yet (the app's own resize, hide / show and panel calls do not, measured). The app now checks every 5 seconds and on a display change, a wake from sleep and an unlock, puts the flag back and writes `TOPMOST restored` to app.log.
+- Tests: app 111 → 122.
+
 ## 0.15.0 (2026-10-28)
 
 - **Blocked tools apply only while a scheduled job runs.** They were passed as `--disallowedTools` on a session's first background start, and the session kept the flag, so a `git push` you typed yourself in that session was refused too. The plugin now refuses them only in a turn started by a scheduled job. A `git push` there goes to the remote session as an approval request when remote is on (approve it there and the session pushes), and is refused otherwise. Sessions already started with the flag keep it.

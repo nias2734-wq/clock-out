@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { shell } from 'electron'
@@ -8,6 +8,7 @@ import type { RemoteView, SessionView } from '@shared/schedule'
 import type { AppSettings } from '@shared/types'
 
 import { isRequestDone, markRequestDone, sessionState } from './appState'
+import { exists, readText } from './fsSafe'
 import { clearInboxes, postInbox } from './inbox'
 import { log } from './log'
 import { paths } from './paths'
@@ -15,6 +16,7 @@ import { readRemoteState, writeRemoteState } from './remoteState'
 import { isCapture } from './capture'
 import { notice, readFile, runClaude } from './revive'
 import { buildOverview, liveSessions } from './schedule'
+import type { LiveRecord } from './schedule'
 import { getSettings } from './settings'
 import { wakeSession } from './wake'
 
@@ -104,7 +106,7 @@ function writeGuide(settings: AppSettings): void {
   mkdirSync(paths.remoteDir, { recursive: true })
   const path = join(paths.remoteDir, 'CLAUDE.md')
   const text = guideText(settings)
-  try { if (readFileSync(path, 'utf8') === text) return } catch { /* not written yet */ }
+  try { if (readText(path) === text) return } catch { /* not written yet */ }
   writeFileSync(path, text, 'utf8')
 }
 
@@ -122,10 +124,11 @@ async function waitFor<T>(probe: () => T | undefined, ms: number): Promise<T | u
   return probe()
 }
 
-export function remoteView(): RemoteView {
+// live: the running sessions when the caller has just listed them (schedule.ts buildOverview), else listed here
+export function remoteView(live?: Map<string, LiveRecord>): RemoteView {
   const settings = getSettings()
   const state = readRemoteState()
-  const rec = state.sessionId !== undefined ? liveSessions().get(state.sessionId) : undefined
+  const rec = state.sessionId !== undefined ? (live ?? liveSessions()).get(state.sessionId) : undefined
   return {
     enabled: settings.remote.enabled,
     isAlive: rec !== undefined,
@@ -253,7 +256,7 @@ export function pendingRequests(now = Date.now()): { path: string; id: string; r
     if (name.endsWith('.result.json')) { remove(path); continue }   // 0.7.0–0.7.2 results
     if (!name.endsWith('.json')) continue
     let req: RemoteRequest | undefined
-    try { req = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) as RemoteRequest } catch { req = undefined }
+    try { req = JSON.parse(readText(path).replace(/^\uFEFF/, '')) as RemoteRequest } catch { req = undefined }
     if (req === undefined || typeof req.sessionId !== 'string' || typeof req.requestedAt !== 'number') {
       let age = Infinity
       try { age = now - statSync(path).mtimeMs } catch { /* gone */ }
@@ -328,5 +331,5 @@ export function onRemoteSettings(before: AppSettings, after: AppSettings): void 
   // the permission is fixed at the first start: a new one means a new remote jobs session
   if (after.remote.permission !== before.remote.permission) void stopRemote().then(() => { writeRemoteState({}); lastStartAt = 0 })
   if (after.remote.enabled && (after.remote.notify !== before.remote.notify || after.language !== before.language)) writeGuide(after)
-  if (existsSync(paths.remoteDir) || after.remote.enabled) log(`REMOTE settings enabled=${after.remote.enabled} notify=${after.remote.notify}`)
+  if (exists(paths.remoteDir) || after.remote.enabled) log(`REMOTE settings enabled=${after.remote.enabled} notify=${after.remote.notify}`)
 }
