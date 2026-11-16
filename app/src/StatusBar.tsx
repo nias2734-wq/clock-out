@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronUp, GripVertical, Smartphone, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 
 import { remoteStage } from '@shared/schedule'
 import type { Overview, RemoteStage } from '@shared/schedule'
@@ -61,10 +61,10 @@ export function StatusBar({ usage, settings, overview, expanded, now, version, o
     if (el === null) return
     const info = el.querySelector('.drag-inner') as HTMLElement | null
     const grip = el.querySelector('.grip') as HTMLElement | null
-    const actions = el.querySelector('.strip-actions') as HTMLElement | null
-    if (info === null || grip === null || actions === null) return
+    const actions = el.querySelector('.strip-actions') as HTMLElement | null   // absent while the bar is a badge
+    if (info === null || grip === null) return
     const fit = () => {
-      const width = Math.ceil(grip.getBoundingClientRect().width + 6 + info.getBoundingClientRect().width + actions.getBoundingClientRect().width) + 6 + 4 + 8 + 2 + 4
+      const width = Math.ceil(grip.getBoundingClientRect().width + 6 + info.getBoundingClientRect().width + (actions?.getBoundingClientRect().width ?? 0)) + 6 + 4 + 8 + 2 + 4
       if (width === sentWidth.current) return
       sentWidth.current = width
       api.setStripWidth(width)
@@ -72,7 +72,7 @@ export function StatusBar({ usage, settings, overview, expanded, now, version, o
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(info)
-    ro.observe(actions)
+    if (actions !== null) ro.observe(actions)
     return () => ro.disconnect()
   })
   // dragging by any spot but the buttons: moves only after 4 px, so a plain click (the remote cell) still clicks
@@ -91,9 +91,16 @@ export function StatusBar({ usage, settings, overview, expanded, now, version, o
     if (!d.moving) { d.moving = true; api.dragStrip('start') }
     api.dragStrip('move', dx, dy)
   }
+  const dragEndAt = useRef(0)   // when the last drag ended: two quick drags are not a double-click
   const onPointerUp = () => {
-    if (drag.current?.moving === true) { api.dragStrip('end'); dragged.current = true }
+    if (drag.current?.moving === true) { api.dragStrip('end'); dragged.current = true; dragEndAt.current = Date.now() }
     drag.current = undefined
+  }
+  // double-click anywhere but the buttons: the bar folds into a small badge, and the badge opens back into the bar
+  const collapsed = settings.statusBar.collapsed === true
+  const onDoubleClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button') !== null || Date.now() - dragEndAt.current < 600) return
+    api.setStripCollapsed(!collapsed)
   }
   const lang = settings.language
   const plan ={ boundaries: planPings(settings.workHours, settings.alignPing.resetHours).targets.map(m => Math.round(m / 60)) }
@@ -102,12 +109,37 @@ export function StatusBar({ usage, settings, overview, expanded, now, version, o
   const next = overview.nextSession
   const stale = usage.isStale === true && usage.rows.length > 0 ? fill(t(lang, 'usageStale'), { at: fetched || '—' }) : undefined
   const stage = remoteStage(overview.remote)
+  // the bar and the badge move, open the menu and fold the same way
+  const frame = {
+    ref, onContextMenu: (e: ReactMouseEvent) => { e.preventDefault(); api.showStripMenu() },
+    onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onDoubleClick,
+    onClickCapture: (e: ReactMouseEvent) => { if (dragged.current) { dragged.current = false; e.stopPropagation() } },
+  }
+
+  if (collapsed) {
+    // the badge: status dot, 5-hour usage and the job count; the rest is on hover and in the menu
+    const five = usage.rows.find(r => r.key === 'five_hour')
+    const fiveAt = five?.resetsAt !== undefined ? Date.parse(five.resetsAt) : undefined
+    const fiveText = five === undefined ? undefined : `${t(lang, 'fiveHour')} ${five.percent}%${fiveAt !== undefined ? ` · ${formatRemaining(fiveAt, now)}` : ''}`
+    return (
+      <div className="strip" {...frame} title={[stale, fiveText, t(lang, 'badgeHint')].filter(x => x !== undefined).join('\n')}>
+        <div className="strip-measure">
+          <span className="drag">
+           <span className="grip"><GripVertical size={14} /></span>
+           <span className="drag-inner">
+            <span className={`dot ${dot}`} />
+            {five !== undefined && <span className={`pct ${five.isCritical === true ? 'danger' : tone(five.percent)}-text`}>{five.percent}%</span>}
+            {overview.jobCount > 0 && <span className="badge">{overview.jobCount}</span>}
+           </span>
+          </span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     // refresh, remote monitor, settings, setup check and the guide are on the right-click menu (main process, strip:menu)
-    <div className="strip" ref={ref} title={t(lang, 'stripMenuHint')} onContextMenu={e => { e.preventDefault(); api.showStripMenu() }}
-      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
-      onClickCapture={e => { if (dragged.current) { dragged.current = false; e.stopPropagation() } }}>
+    <div className="strip" {...frame} title={t(lang, 'stripMenuHint')}>
       <div className="strip-measure">
         {/* the info row stays outside the drag region (a drag region takes no hover or right-click, so the reset-time
             tooltips and the menu would not show): the grip is a native drag region, the rest moves by onPointerMove */}

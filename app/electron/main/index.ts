@@ -34,6 +34,7 @@ const STRIP_HEIGHT = 32
 const PANEL_WIDTH = 1000      // the jobs panel's width (narrower screens: the work area minus a margin)
 const PANEL_GAP = 4           // space between the bar and the panel under it
 const STRIP_WIDTH = 720   // first size; the renderer then asks for its content width (strip:width)
+const STRIP_MIN_WIDTH = 48   // the folded badge is 126 px wide (grip, dot, 5-hour %, job count: measured)
 const USAGE_INTERVAL_MS = 5 * 60 * 1000
 const USAGE_RETRY_MS = 60_000          // one more try after a failed fetch
 const USAGE_RESUME_DELAY_MS = 10_000   // after a wake from sleep
@@ -433,10 +434,17 @@ function registerIpc(): void {
     return s === undefined ? `no session ${String(sessionId).slice(0, 8)}` : openSession(s)
   })
   ipcMain.on('strip:drag', (_e, phase: string, dx: number, dy: number) => dragStrip(phase, dx, dy))
+  // the bar folds into a badge or opens back. Saved here from the current settings, not by the page with settings:set:
+  // the page's copy of statusBar has the position from when it loaded, and would put the bar back there
+  ipcMain.on('strip:collapse', (_e, collapsed: boolean) => {
+    const next = setSettings({ statusBar: { ...getSettings().statusBar, collapsed: collapsed === true } })
+    if (collapsed === true) setExpanded(false)   // the badge has no jobs button to close the panel with
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('settings', next)
+  })
   ipcMain.on('strip:width', (_e, width: number) => {
     if (strip === undefined || strip.isDestroyed() || !Number.isFinite(width)) return
     const area = screen.getPrimaryDisplay().workArea
-    const w = Math.min(Math.max(Math.ceil(width), 320), area.width)
+    const w = Math.min(Math.max(Math.ceil(width), STRIP_MIN_WIDTH), area.width)
     if (w === strip.getBounds().width) return   // the bar asks on every redraw; nothing to do at the same width
     const [x = 0, y = 0] = strip.getPosition()
     strip.setBounds({ x: Math.min(x, area.x + area.width - w), y, width: w, height: STRIP_HEIGHT })

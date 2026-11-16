@@ -60,7 +60,7 @@ export type AppSettings = {
   launchAtLogin: boolean
   updateCheck: boolean   // once a day, asks GitHub for the latest release and shows a notice when it is newer
   onboardingDone: boolean
-  statusBar: { x?: number; y?: number; expandedHeightRatio: number }
+  statusBar: { x?: number; y?: number; expandedHeightRatio: number; collapsed?: boolean }   // collapsed: shown as a small badge (double-click toggles)
   workHours: WorkHours
   alignPing: { enabled: boolean; model: string; resetHours?: number[] }   // resetHours: chosen reset hours, absent = lunch end and 5 h later
   revive: { leadMinutes: number; expiryLeadHours: number; dailyAtEnd: boolean; confirmBefore: boolean; dryRun: boolean }
@@ -148,6 +148,7 @@ export type ClockOutApi = {
   openSettings: () => void
   onSettings: (listener: (s: AppSettings) => void) => () => void
   setStripWidth: (width: number) => void   // the bar sizes itself to its content
+  setStripCollapsed: (collapsed: boolean) => void   // the bar folds into a badge (true) or opens back (false); kept in settings
   showStripMenu: () => void                // the bar's right-click menu (refresh, panel, remote monitor, settings, setup check, guide, hide, quit)
   dragStrip: (phase: 'start' | 'move' | 'end', dx?: number, dy?: number) => void   // moves the bar by the mouse travel since 'start'
   onboardingDone: () => void               // closes the first-run window and starts the app
